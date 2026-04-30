@@ -26,7 +26,7 @@ class _LoginPageState extends State<LoginPage> {
 
   Future<void> _handleSubmit() async {
     if (!widget.supabaseConfigured) {
-      _showSnack('请先用 --dart-define 配置 SUPABASE_URL 和 SUPABASE_ANON_KEY');
+      _showSnack('请先用 --dart-define 配置 SUPABASE_ANON_KEY');
       return;
     }
     if (!_isAgreed) {
@@ -52,7 +52,7 @@ class _LoginPageState extends State<LoginPage> {
               : _nameCtrl.text.trim(),
         );
         if (!signedIn) {
-          _showSnack('注册成功。若项目开启了邮箱确认，请先确认邮件再登录');
+          _showSnack('当前 Supabase 仍开启了邮箱确认，请在后台关闭 Confirm Email 后重新注册');
           return;
         }
       } else {
@@ -76,8 +76,13 @@ class _LoginPageState extends State<LoginPage> {
   String _friendlyAuthError(String message) {
     final lower = message.toLowerCase();
     if (lower.contains('invalid login')) return '邮箱或密码不太对';
+    if (lower.contains('not confirmed') ||
+        lower.contains('not_confirmed') ||
+        lower.contains('confirm')) {
+      return '当前 Supabase 仍开启了邮箱确认，请在后台关闭 Confirm Email 后重新注册';
+    }
     if (lower.contains('already registered')) return '这个邮箱已经注册过了';
-    if (lower.contains('email')) return '邮箱格式或确认状态需要检查一下';
+    if (lower.contains('email')) return '邮箱格式需要检查一下';
     return message;
   }
 
@@ -144,7 +149,7 @@ class _LoginPageState extends State<LoginPage> {
                     ),
                   ),
                   child: const Text(
-                    '当前还没有 Supabase 配置。运行时请加入 --dart-define=SUPABASE_URL=... 和 --dart-define=SUPABASE_ANON_KEY=...',
+                    '当前还没有 Supabase anon key。项目 URL 已有默认值，运行时请加入 --dart-define=SUPABASE_ANON_KEY=...',
                     style: AppTextStyles.body,
                   ),
                 ),

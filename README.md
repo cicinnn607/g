@@ -4,13 +4,15 @@
 
 ## Supabase 运行配置
 
-运行 Flutter 时不要把密钥写进源码，使用 Dart Define 传入：
+项目 URL 默认使用 `https://anszxslagplhqofakabk.supabase.co`。运行 Flutter 时不要把密钥写进源码，只使用 Dart Define 传入 anon key：
 
 ```powershell
-flutter run --dart-define=SUPABASE_URL=https://your-project.supabase.co --dart-define=SUPABASE_ANON_KEY=your-anon-key
+flutter run --dart-define=SUPABASE_ANON_KEY=your-anon-key
 ```
 
-数据库结构在 `supabase/migrations/202604290001_initial_health_schema.sql`，菜品识别 Edge Function 在 `supabase/functions/recognize-meal`。百度密钥请配置为 Supabase secrets：`BAIDU_API_KEY` 和 `BAIDU_SECRET_KEY`。
+数据库结构在 `supabase/migrations/202604290001_initial_health_schema.sql`，菜品识别 Edge Function 在 `supabase/functions/recognize-meal`。`SUPABASE_SERVICE_ROLE_KEY`、`BAIDU_API_KEY` 和 `BAIDU_SECRET_KEY` 只配置为 Supabase secrets，不进入 Flutter 客户端。
+
+注册流程使用邮箱 + 密码，并按毕业设计演示需求关闭邮箱确认：在 Supabase Dashboard 的 `Authentication -> Providers -> Email` 中关闭 `Confirm Email`。数据库 trigger `public.handle_new_user()` 会在 `auth.users` 新增用户时自动创建默认 `user_profile`、`user_body_metrics` 和提醒。
 
 ## Getting Started
 

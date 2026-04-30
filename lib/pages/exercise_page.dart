@@ -140,6 +140,37 @@ class _ExerciseRecordPageState extends State<ExerciseRecordPage> {
                     ],
                   ),
                 ),
+                if (!provider.hasBodyMetric) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppColors.yellowSoft,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: AppColors.yellow.withValues(alpha: 0.35),
+                      ),
+                    ),
+                    child: const Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          Icons.info_outline,
+                          color: AppColors.yellow,
+                          size: 20,
+                        ),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            '还没有体重记录，当前先按 65.0 kg 估算。到个人设置保存体重后会更准。',
+                            style: AppTextStyles.caption,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 16),
                 Row(
                   children: [

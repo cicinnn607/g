@@ -308,8 +308,9 @@ class _DietRecordPageState extends State<DietRecordPage> {
                     separatorBuilder: (_, _) => const Divider(height: 1),
                     itemBuilder: (context, index) {
                       final meal = provider.mealHistory[index];
+                      final mealId = '${meal['id'] ?? meal['meal_id']}';
                       return Dismissible(
-                        key: Key('meal_${meal['meal_id']}'),
+                        key: Key('meal_$mealId'),
                         direction: DismissDirection.endToStart,
                         background: Container(
                           alignment: Alignment.centerRight,
@@ -317,7 +318,7 @@ class _DietRecordPageState extends State<DietRecordPage> {
                           color: AppColors.red,
                           child: const Icon(Icons.delete, color: Colors.white),
                         ),
-                        onDismissed: (_) => _delete('${meal['meal_id']}'),
+                        onDismissed: (_) => _delete(mealId),
                         child: ListTile(
                           contentPadding: EdgeInsets.zero,
                           leading: CircleAvatar(

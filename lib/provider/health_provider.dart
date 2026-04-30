@@ -20,6 +20,7 @@ class HealthProvider with ChangeNotifier {
   String birthDate = '${DateTime.now().year - 23}-01-01';
   int age = 23;
   double weight = 65.0;
+  bool hasBodyMetric = false;
 
   List<Map<String, dynamic>> _glucoseHistory = [];
   List<Map<String, dynamic>> _mealHistory = [];
@@ -78,6 +79,7 @@ class HealthProvider with ChangeNotifier {
           '${profile['birth_date'] ?? '${DateTime.now().year - 23}-01-01'}';
       age = snapshot.age;
       weight = snapshot.weight;
+      hasBodyMetric = snapshot.hasBodyMetric;
 
       _glucoseHistory = snapshot.glucoseRecords;
       _mealHistory = snapshot.meals;
@@ -105,6 +107,7 @@ class HealthProvider with ChangeNotifier {
     birthDate = '${DateTime.now().year - 23}-01-01';
     age = 23;
     weight = 65.0;
+    hasBodyMetric = false;
     _glucoseHistory = [];
     _mealHistory = [];
     _mealItems = [];

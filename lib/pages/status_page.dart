@@ -135,13 +135,16 @@ class _StatusRecordPageState extends State<StatusRecordPage> {
                     ...provider.mealHistory
                         .take(6)
                         .map(
-                          (meal) => DropdownMenuItem<String?>(
-                            value: '${meal['meal_id']}',
-                            child: Text(
-                              '${meal['meal_type']} · ${meal['food_names'] ?? '这餐'}',
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
+                          (meal) {
+                            final mealId = '${meal['id'] ?? meal['meal_id']}';
+                            return DropdownMenuItem<String?>(
+                              value: mealId,
+                              child: Text(
+                                '${meal['meal_type']} · ${meal['food_names'] ?? '这餐'}',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            );
+                          },
                         ),
                   ],
                   onChanged: (value) => setState(() => _relatedMealId = value),

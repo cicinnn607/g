@@ -51,6 +51,7 @@ class HealthSnapshot {
   final Map<String, dynamic> profile;
   final double weight;
   final int age;
+  final bool hasBodyMetric;
   final List<Map<String, dynamic>> glucoseRecords;
   final List<Map<String, dynamic>> meals;
   final List<Map<String, dynamic>> mealItems;
@@ -63,6 +64,7 @@ class HealthSnapshot {
     required this.profile,
     required this.weight,
     required this.age,
+    required this.hasBodyMetric,
     required this.glucoseRecords,
     required this.meals,
     required this.mealItems,
@@ -90,60 +92,214 @@ class HealthRepository {
 
   static const List<Map<String, dynamic>> defaultExerciseCatalog = [
     {
-      'id': 'walk_slow',
-      'name': '慢走',
-      'met_value': 2.8,
+      'id': '10000000-0000-4000-8000-000000000001',
+      'name': '缓慢步行 (<4km/h)',
+      'met_value': 2.0,
       'category': '低强度',
-      'description': '饭后轻松走一走',
+      'description': '散步、逛街等非常轻松的走动',
     },
     {
-      'id': 'walk_fast',
-      'name': '快走',
-      'met_value': 4.3,
+      'id': '10000000-0000-4000-8000-000000000002',
+      'name': '做家务 (轻度)',
+      'met_value': 2.5,
+      'category': '低强度',
+      'description': '擦桌子、整理杂物、洗碗',
+    },
+    {
+      'id': '10000000-0000-4000-8000-000000000003',
+      'name': '做家务 (重度)',
+      'met_value': 3.5,
       'category': '中等强度',
-      'description': '能说话但略喘',
+      'description': '拖地、搬动家具、擦窗户',
     },
     {
-      'id': 'jog',
-      'name': '慢跑',
+      'id': '10000000-0000-4000-8000-000000000004',
+      'name': '园艺/种花',
+      'met_value': 3.8,
+      'category': '中等强度',
+      'description': '修剪植物、除草',
+    },
+    {
+      'id': '10000000-0000-4000-8000-000000000005',
+      'name': '站立办公/工作',
+      'met_value': 1.8,
+      'category': '低强度',
+      'description': '不需要大幅度移动的站立工作',
+    },
+    {
+      'id': '10000000-0000-4000-8000-000000000006',
+      'name': '快走 (6km/h)',
+      'met_value': 4.5,
+      'category': '中等强度',
+      'description': '有一定节奏的快速步行',
+    },
+    {
+      'id': '10000000-0000-4000-8000-000000000007',
+      'name': '慢跑 (8km/h)',
       'met_value': 7.0,
-      'category': '有氧',
-      'description': '稳定节奏跑步',
+      'category': '中等强度',
+      'description': '初学者常见的跑步速度',
     },
     {
-      'id': 'bike',
-      'name': '骑行',
-      'met_value': 6.0,
-      'category': '有氧',
-      'description': '中等速度骑行',
+      'id': '10000000-0000-4000-8000-000000000008',
+      'name': '中速跑 (10km/h)',
+      'met_value': 9.8,
+      'category': '高强度',
+      'description': '标准的健身跑步速度',
     },
     {
-      'id': 'yoga',
-      'name': '瑜伽',
-      'met_value': 3.0,
-      'category': '舒缓',
-      'description': '轻柔拉伸和呼吸',
+      'id': '10000000-0000-4000-8000-000000000009',
+      'name': '快速跑 (12km/h)',
+      'met_value': 11.5,
+      'category': '高强度',
+      'description': '较高强度的长跑',
     },
     {
-      'id': 'strength',
-      'name': '力量训练',
-      'met_value': 5.0,
-      'category': '抗阻',
-      'description': '自重或器械训练',
+      'id': '10000000-0000-4000-8000-000000000010',
+      'name': '极速冲刺 (16km/h)',
+      'met_value': 14.5,
+      'category': '高强度',
+      'description': '短距离冲刺或间歇跑',
     },
     {
-      'id': 'swim',
-      'name': '游泳',
-      'met_value': 7.0,
-      'category': '有氧',
-      'description': '连续游泳',
-    },
-    {
-      'id': 'hiit',
-      'name': 'HIIT',
+      'id': '10000000-0000-4000-8000-000000000011',
+      'name': '上下楼梯',
       'met_value': 8.0,
       'category': '高强度',
-      'description': '间歇训练',
+      'description': '爬楼梯锻炼',
+    },
+    {
+      'id': '10000000-0000-4000-8000-000000000012',
+      'name': '休闲骑行 (<16km/h)',
+      'met_value': 4.0,
+      'category': '中等强度',
+      'description': '慢速骑车去超市或兜风',
+    },
+    {
+      'id': '10000000-0000-4000-8000-000000000013',
+      'name': '健身房动感单车',
+      'met_value': 8.5,
+      'category': '高强度',
+      'description': '高频率、有节奏的室内单车',
+    },
+    {
+      'id': '10000000-0000-4000-8000-000000000014',
+      'name': '竞技骑行 (>20km/h)',
+      'met_value': 10.5,
+      'category': '高强度',
+      'description': '公路车快速骑行',
+    },
+    {
+      'id': '10000000-0000-4000-8000-000000000015',
+      'name': '休闲游泳 (蛙泳/慢速)',
+      'met_value': 5.8,
+      'category': '中等强度',
+      'description': '不间断的轻松游泳',
+    },
+    {
+      'id': '10000000-0000-4000-8000-000000000016',
+      'name': '竞速游泳 (自由泳/快速)',
+      'met_value': 9.5,
+      'category': '高强度',
+      'description': '高频率的往返游泳',
+    },
+    {
+      'id': '10000000-0000-4000-8000-000000000017',
+      'name': '羽毛球 (休闲)',
+      'met_value': 4.5,
+      'category': '中等强度',
+      'description': '公园里的双打或练习',
+    },
+    {
+      'id': '10000000-0000-4000-8000-000000000018',
+      'name': '羽毛球 (竞技)',
+      'met_value': 7.0,
+      'category': '中等强度',
+      'description': '有强度的比赛',
+    },
+    {
+      'id': '10000000-0000-4000-8000-000000000019',
+      'name': '乒乓球',
+      'met_value': 4.0,
+      'category': '中等强度',
+      'description': '持续的对练',
+    },
+    {
+      'id': '10000000-0000-4000-8000-000000000020',
+      'name': '网球 (单打)',
+      'met_value': 8.0,
+      'category': '高强度',
+      'description': '全场跑动的竞技',
+    },
+    {
+      'id': '10000000-0000-4000-8000-000000000021',
+      'name': '篮球 (投篮练习)',
+      'met_value': 4.5,
+      'category': '中等强度',
+      'description': '半场定点投篮',
+    },
+    {
+      'id': '10000000-0000-4000-8000-000000000022',
+      'name': '篮球 (正式比赛)',
+      'met_value': 9.0,
+      'category': '高强度',
+      'description': '全场高强度的对抗',
+    },
+    {
+      'id': '10000000-0000-4000-8000-000000000023',
+      'name': '足球 (正式比赛)',
+      'met_value': 10.0,
+      'category': '高强度',
+      'description': '大面积跑动的竞技',
+    },
+    {
+      'id': '10000000-0000-4000-8000-000000000024',
+      'name': '基础瑜伽/普拉提',
+      'met_value': 3.0,
+      'category': '低强度',
+      'description': '拉伸与呼吸训练',
+    },
+    {
+      'id': '10000000-0000-4000-8000-000000000025',
+      'name': '力量训练 (轻重量)',
+      'met_value': 3.5,
+      'category': '中等强度',
+      'description': '哑铃操或小重量塑形',
+    },
+    {
+      'id': '10000000-0000-4000-8000-000000000026',
+      'name': '力量训练 (大重量)',
+      'met_value': 6.0,
+      'category': '中等强度',
+      'description': '深蹲、硬拉等核心力量训练',
+    },
+    {
+      'id': '10000000-0000-4000-8000-000000000027',
+      'name': 'HIIT/波比跳',
+      'met_value': 11.0,
+      'category': '高强度',
+      'description': '高强度间歇训练',
+    },
+    {
+      'id': '10000000-0000-4000-8000-000000000028',
+      'name': '跳绳 (慢速)',
+      'met_value': 8.0,
+      'category': '高强度',
+      'description': '约 100 次/分钟',
+    },
+    {
+      'id': '10000000-0000-4000-8000-000000000029',
+      'name': '跳绳 (快速)',
+      'met_value': 12.0,
+      'category': '高强度',
+      'description': '约 120-160 次/分钟',
+    },
+    {
+      'id': '10000000-0000-4000-8000-000000000030',
+      'name': '划船机 (中等强度)',
+      'met_value': 7.0,
+      'category': '中等强度',
+      'description': '全身协调有氧训练',
     },
   ];
 
@@ -196,11 +352,12 @@ class HealthRepository {
     if (client == null || user == null) return;
 
     final existing = await client
-        .from('user_profiles')
+        .from('user_profile')
         .select()
         .eq('id', user.id)
         .maybeSingle();
     if (existing != null) {
+      await _seedDefaultBodyMetricIfMissing(client, user.id);
       await _seedDefaultReminders(client, user.id);
       return;
     }
@@ -208,7 +365,7 @@ class HealthRepository {
     final fallbackName = displayName?.trim().isNotEmpty == true
         ? displayName!.trim()
         : _nameFromEmail(user.email);
-    await client.from('user_profiles').insert({
+    await client.from('user_profile').insert({
       'id': user.id,
       'display_name': fallbackName,
       'gender': '男',
@@ -216,13 +373,7 @@ class HealthRepository {
       'birth_date': '${DateTime.now().year - 23}-01-01',
     });
 
-    await client.from('user_body_metrics').insert({
-      'id': _uuid.v4(),
-      'user_id': user.id,
-      'weight': 65.0,
-      'record_time': _dbTime(DateTime.now()),
-    });
-
+    await _seedDefaultBodyMetricIfMissing(client, user.id);
     await _seedDefaultReminders(client, user.id);
   }
 
@@ -232,7 +383,10 @@ class HealthRepository {
 
     await ensureCurrentUserProfile();
     final profile = await getProfile();
-    final weight = await getLatestWeight();
+    final bodyMetric = await getLatestBodyMetric();
+    final weight = bodyMetric == null
+        ? 65.0
+        : double.tryParse('${bodyMetric['weight']}') ?? 65.0;
     final glucoseRecords = await getGlucoseRecords();
     final mealItems = await getMealItems();
     final meals = await getMeals(preloadedItems: mealItems);
@@ -245,6 +399,7 @@ class HealthRepository {
       profile: profile,
       weight: weight,
       age: ageFromBirthDate('${profile['birth_date'] ?? ''}'),
+      hasBodyMetric: bodyMetric != null,
       glucoseRecords: glucoseRecords,
       meals: meals,
       mealItems: mealItems,
@@ -261,7 +416,7 @@ class HealthRepository {
     if (client == null || userId == null) return _defaultProfile();
 
     final row = await client
-        .from('user_profiles')
+        .from('user_profile')
         .select()
         .eq('id', userId)
         .maybeSingle();
@@ -270,9 +425,15 @@ class HealthRepository {
   }
 
   Future<double> getLatestWeight() async {
+    final row = await getLatestBodyMetric();
+    if (row == null) return 65.0;
+    return double.tryParse('${row['weight']}') ?? 65.0;
+  }
+
+  Future<Map<String, dynamic>?> getLatestBodyMetric() async {
     final client = _client;
     final userId = currentUserId;
-    if (client == null || userId == null) return 65.0;
+    if (client == null || userId == null) return null;
 
     final rows = _rows(
       await client
@@ -282,8 +443,8 @@ class HealthRepository {
           .order('record_time', ascending: false)
           .limit(1),
     );
-    if (rows.isEmpty) return 65.0;
-    return double.tryParse('${rows.first['weight']}') ?? 65.0;
+    if (rows.isEmpty) return null;
+    return rows.first;
   }
 
   Future<List<Map<String, dynamic>>> getGlucoseRecords() async {
@@ -293,7 +454,7 @@ class HealthRepository {
 
     return _rows(
       await client
-          .from('blood_glucose')
+          .from('blood_glucose_logs')
           .select()
           .eq('user_id', userId)
           .order('record_time', ascending: false),
@@ -322,7 +483,8 @@ class HealthRepository {
     }
 
     return meals.map((meal) {
-      final mealItems = itemsByMeal['${meal['meal_id']}'] ?? const [];
+      final mealId = '${meal['id'] ?? meal['meal_id']}';
+      final mealItems = itemsByMeal[mealId] ?? const [];
       final calories = mealItems.fold<double>(
         0,
         (sum, item) =>
@@ -330,6 +492,8 @@ class HealthRepository {
       );
       return {
         ...meal,
+        'id': mealId,
+        'meal_id': mealId,
         'calories_final': calories,
         'item_count': mealItems.length,
         'food_names': mealItems
@@ -351,7 +515,7 @@ class HealthRepository {
     if (meals.isEmpty) return const [];
 
     final mealMeta = {
-      for (final meal in meals) '${meal['meal_id']}': meal,
+      for (final meal in meals) '${meal['id'] ?? meal['meal_id']}': meal,
     };
     final mealIds = mealMeta.keys.toList();
     final items = _rows(
@@ -410,6 +574,7 @@ class HealthRepository {
       final motion = catalogById['${log['motion_id']}'];
       return {
         ...log,
+        'mets': log['mets_snapshot'],
         'motion_name': motion?['name'] ?? '运动',
         'category': motion?['category'],
         'description': motion?['description'],
@@ -453,7 +618,7 @@ class HealthRepository {
   }) async {
     final client = _requireClient();
     final userId = _requireUserId();
-    await client.from('user_profiles').upsert({
+    await client.from('user_profile').upsert({
       'id': userId,
       'display_name': displayName.trim().isEmpty
           ? _nameFromEmail(client.auth.currentUser?.email)
@@ -461,7 +626,6 @@ class HealthRepository {
       'gender': gender,
       'height': height,
       'birth_date': birthDate,
-      'updated_at': DateTime.now().toUtc().toIso8601String(),
     });
   }
 
@@ -488,7 +652,7 @@ class HealthRepository {
   }) async {
     final client = _requireClient();
     final userId = _requireUserId();
-    await client.from('blood_glucose').insert({
+    await client.from('blood_glucose_logs').insert({
       'id': _uuid.v4(),
       'user_id': userId,
       'record_time': _dbTime(recordTime),
@@ -502,7 +666,7 @@ class HealthRepository {
   Future<void> deleteGlucose(String id) async {
     final client = _requireClient();
     await client
-        .from('blood_glucose')
+        .from('blood_glucose_logs')
         .delete()
         .eq('id', id)
         .eq('user_id', _requireUserId());
@@ -559,7 +723,7 @@ class HealthRepository {
     final userId = _requireUserId();
     final mealId = _uuid.v4();
     await client.from('meals').insert({
-      'meal_id': mealId,
+      'id': mealId,
       'user_id': userId,
       'meal_type': mealType,
       'meal_time': _dbTime(mealTime),
@@ -579,16 +743,15 @@ class HealthRepository {
                         item.foodNameConfirmed.trim().isEmpty
                             ? '未命名食物'
                             : item.foodNameConfirmed.trim(),
-                    'calories_raw': item.caloriesRaw,
+                    'calories_raw': _caloriesRawForGeneratedColumn(item),
                     'portion_size': item.portionSize,
-                    'calories_final': item.caloriesFinal,
                     'image_url': item.imageUrl,
                   },
                 )
                 .toList(),
           );
     } catch (_) {
-      await client.from('meals').delete().eq('meal_id', mealId);
+      await client.from('meals').delete().eq('id', mealId);
       rethrow;
     }
   }
@@ -598,8 +761,17 @@ class HealthRepository {
     await client
         .from('meals')
         .delete()
-        .eq('meal_id', mealId)
+        .eq('id', mealId)
         .eq('user_id', _requireUserId());
+  }
+
+  double _caloriesRawForGeneratedColumn(MealItemDraft item) {
+    final portion = item.portionSize <= 0 ? 1.0 : item.portionSize;
+    final expectedFinal = item.caloriesRaw * portion;
+    if ((item.caloriesFinal - expectedFinal).abs() < 0.05) {
+      return item.caloriesRaw;
+    }
+    return double.parse((item.caloriesFinal / portion).toStringAsFixed(1));
   }
 
   Future<void> saveExercise({
@@ -632,7 +804,7 @@ class HealthRepository {
       'exercise_time': _dbTime(exerciseTime),
       'motion_id': motionId,
       'duration': duration,
-      'mets': met,
+      'mets_snapshot': met,
       'calories_burned': calories,
     });
   }
@@ -716,7 +888,7 @@ class HealthRepository {
   SupabaseClient _requireClient() {
     final client = _client;
     if (client == null) {
-      throw StateError('还没有配置 Supabase URL 和 anon key');
+      throw StateError('还没有配置 Supabase anon key');
     }
     return client;
   }
@@ -725,6 +897,27 @@ class HealthRepository {
     final userId = currentUserId;
     if (userId == null) throw StateError('请先登录');
     return userId;
+  }
+
+  Future<void> _seedDefaultBodyMetricIfMissing(
+    SupabaseClient client,
+    String userId,
+  ) async {
+    final existing = _rows(
+      await client
+          .from('user_body_metrics')
+          .select('id')
+          .eq('user_id', userId)
+          .limit(1),
+    );
+    if (existing.isNotEmpty) return;
+
+    await client.from('user_body_metrics').insert({
+      'id': _uuid.v4(),
+      'user_id': userId,
+      'weight': 65.0,
+      'record_time': _dbTime(DateTime.now()),
+    });
   }
 
   Future<void> _seedDefaultReminders(
@@ -769,6 +962,7 @@ class HealthRepository {
       profile: _defaultProfile(),
       weight: 65.0,
       age: 23,
+      hasBodyMetric: false,
       glucoseRecords: const [],
       meals: const [],
       mealItems: const [],
