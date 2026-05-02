@@ -100,6 +100,45 @@ class _Header extends StatelessWidget {
                     ),
                   ],
                 ),
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 9,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.primarySoft,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(
+                        Icons.edit_note,
+                        size: 18,
+                        color: AppColors.primaryDark,
+                      ),
+                      SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          '点这里记录今天状态',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: AppColors.primaryDark,
+                          ),
+                        ),
+                      ),
+                      Icon(
+                        Icons.chevron_right,
+                        size: 18,
+                        color: AppColors.primaryDark,
+                      ),
+                    ],
+                  ),
+                ),
               ],
             ),
           ),

@@ -5,6 +5,13 @@ import '../core/app_style.dart';
 import '../provider/health_provider.dart';
 import '../widgets/soft_card.dart';
 
+class _StatusOption {
+  final String label;
+  final String emoji;
+
+  const _StatusOption(this.label, this.emoji);
+}
+
 class StatusRecordPage extends StatefulWidget {
   const StatusRecordPage({super.key});
 
@@ -14,11 +21,18 @@ class StatusRecordPage extends StatefulWidget {
 
 class _StatusRecordPageState extends State<StatusRecordPage> {
   final _notesCtrl = TextEditingController();
-  final _levels = const ['极度疲劳', '略感疲惫', '状态平稳', '感觉不错', '精力充沛'];
+  final _levels = const [
+    _StatusOption('极度疲劳', '😵'),
+    _StatusOption('略感疲惫', '😮‍💨'),
+    _StatusOption('状态平稳', '🙂'),
+    _StatusOption('感觉不错', '😊'),
+    _StatusOption('精力充沛', '⚡'),
+  ];
   String _level = '状态平稳';
   DateTime _recordTime = DateTime.now();
   String? _relatedMealId;
   String? _relatedExerciseId;
+  bool _showAssociations = false;
 
   Future<void> _pickDateTime() async {
     final date = await showDatePicker(
@@ -59,6 +73,7 @@ class _StatusRecordPageState extends State<StatusRecordPage> {
       _recordTime = DateTime.now();
       _relatedMealId = null;
       _relatedExerciseId = null;
+      _showAssociations = false;
     });
     await provider.loadDashboardData();
     if (!mounted) return;
@@ -86,35 +101,29 @@ class _StatusRecordPageState extends State<StatusRecordPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
+                Column(
                   children: _levels
                       .map(
-                        (level) => ChoiceChip(
-                          label: Text(level),
-                          selected: _level == level,
-                          selectedColor: AppColors.primary.withValues(alpha: 0.14),
-                          labelStyle: TextStyle(
-                            color: _level == level
-                                ? AppColors.primaryDark
-                                : AppColors.text,
-                            fontWeight: _level == level
-                                ? FontWeight.w800
-                                : FontWeight.w500,
+                        (option) => Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: _StatusChoiceTile(
+                            option: option,
+                            selected: _level == option.label,
+                            onTap: () => setState(() => _level = option.label),
                           ),
-                          onSelected: (_) => setState(() => _level = level),
                         ),
                       )
                       .toList(),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 8),
                 TextField(
                   controller: _notesCtrl,
                   maxLines: 3,
                   decoration: InputDecoration(
-                    labelText: '备注',
-                    hintText: '比如：下午困、饿得快、精神不错',
+                    labelText: '具体感受',
+                    hintText: '比如：饭后犯困、饿得快、注意力下降、精神不错',
+                    helperText: '这里的内容会用于后续分析，帮你发现饮食、运动和状态之间的关系。',
+                    helperMaxLines: 2,
                     filled: true,
                     fillColor: AppColors.background,
                     border: OutlineInputBorder(
@@ -124,53 +133,19 @@ class _StatusRecordPageState extends State<StatusRecordPage> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                DropdownButtonFormField<String?>(
-                  initialValue: _relatedMealId,
-                  decoration: _selectDecoration('关联最近一餐'),
-                  items: [
-                    const DropdownMenuItem<String?>(
-                      value: null,
-                      child: Text('不关联'),
-                    ),
-                    ...provider.mealHistory
-                        .take(6)
-                        .map(
-                          (meal) {
-                            final mealId = '${meal['id'] ?? meal['meal_id']}';
-                            return DropdownMenuItem<String?>(
-                              value: mealId,
-                              child: Text(
-                                '${meal['meal_type']} · ${meal['food_names'] ?? '这餐'}',
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            );
-                          },
-                        ),
-                  ],
-                  onChanged: (value) => setState(() => _relatedMealId = value),
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String?>(
-                  initialValue: _relatedExerciseId,
-                  decoration: _selectDecoration('关联最近一次运动'),
-                  items: [
-                    const DropdownMenuItem<String?>(
-                      value: null,
-                      child: Text('不关联'),
-                    ),
-                    ...provider.exerciseHistory
-                        .take(6)
-                        .map(
-                          (exercise) => DropdownMenuItem<String?>(
-                            value: '${exercise['id']}',
-                            child: Text(
-                              '${exercise['motion_name'] ?? '运动'} · ${exercise['duration']}分钟',
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ),
-                  ],
-                  onChanged: (value) =>
+                _AssociationSection(
+                  expanded: _showAssociations,
+                  mealHistory: provider.mealHistory,
+                  exerciseHistory: provider.exerciseHistory,
+                  relatedMealId: _relatedMealId,
+                  relatedExerciseId: _relatedExerciseId,
+                  selectDecoration: _selectDecoration,
+                  onToggle: () => setState(
+                    () => _showAssociations = !_showAssociations,
+                  ),
+                  onMealChanged: (value) =>
+                      setState(() => _relatedMealId = value),
+                  onExerciseChanged: (value) =>
                       setState(() => _relatedExerciseId = value),
                 ),
                 const SizedBox(height: 12),
@@ -302,5 +277,288 @@ class _StatusRecordPageState extends State<StatusRecordPage> {
   void dispose() {
     _notesCtrl.dispose();
     super.dispose();
+  }
+}
+
+class _StatusChoiceTile extends StatelessWidget {
+  final _StatusOption option;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _StatusChoiceTile({
+    required this.option,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected
+          ? AppColors.primary.withValues(alpha: 0.12)
+          : AppColors.background,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onTap,
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: selected ? AppColors.primary : AppColors.line,
+            ),
+          ),
+          child: Row(
+            children: [
+              Text(option.emoji, style: const TextStyle(fontSize: 20)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  option.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                    color: selected ? AppColors.primaryDark : AppColors.text,
+                  ),
+                ),
+              ),
+              Icon(
+                selected ? Icons.radio_button_checked : Icons.circle_outlined,
+                color: selected ? AppColors.primaryDark : AppColors.faint,
+                size: 20,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AssociationSection extends StatelessWidget {
+  final bool expanded;
+  final List<Map<String, dynamic>> mealHistory;
+  final List<Map<String, dynamic>> exerciseHistory;
+  final String? relatedMealId;
+  final String? relatedExerciseId;
+  final InputDecoration Function(String label) selectDecoration;
+  final VoidCallback onToggle;
+  final ValueChanged<String?> onMealChanged;
+  final ValueChanged<String?> onExerciseChanged;
+
+  const _AssociationSection({
+    required this.expanded,
+    required this.mealHistory,
+    required this.exerciseHistory,
+    required this.relatedMealId,
+    required this.relatedExerciseId,
+    required this.selectDecoration,
+    required this.onToggle,
+    required this.onMealChanged,
+    required this.onExerciseChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.background,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.line),
+      ),
+      child: Column(
+        children: [
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: onToggle,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 11,
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.link,
+                      size: 18,
+                      color: AppColors.primaryDark,
+                    ),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        '可选关联',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.text,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      expanded ? '收起' : '展开',
+                      style: AppTextStyles.caption,
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(
+                      expanded
+                          ? Icons.keyboard_arrow_up
+                          : Icons.keyboard_arrow_down,
+                      color: AppColors.muted,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (expanded) ...[
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                children: [
+                  _AssociationDropdown(
+                    value: relatedMealId,
+                    label: '关联最近一餐',
+                    emptyText: '暂无可关联餐食',
+                    items: _mealItems(),
+                    decoration: selectDecoration('关联最近一餐'),
+                    onChanged: onMealChanged,
+                  ),
+                  const SizedBox(height: 12),
+                  _AssociationDropdown(
+                    value: relatedExerciseId,
+                    label: '关联最近一次运动',
+                    emptyText: '暂无可关联运动',
+                    items: _exerciseItems(),
+                    decoration: selectDecoration('关联最近一次运动'),
+                    onChanged: onExerciseChanged,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  List<DropdownMenuItem<String?>> _mealItems() {
+    if (mealHistory.isEmpty) {
+      return const [
+        DropdownMenuItem<String?>(
+          value: null,
+          child: _DropdownText('暂无可关联餐食'),
+        ),
+      ];
+    }
+
+    return [
+      const DropdownMenuItem<String?>(
+        value: null,
+        child: _DropdownText('不关联'),
+      ),
+      ...mealHistory.take(6).map(
+        (meal) {
+          final mealId = '${meal['id'] ?? meal['meal_id']}';
+          return DropdownMenuItem<String?>(
+            value: mealId,
+            child: _DropdownText(
+              '${meal['meal_type']} · ${meal['food_names'] ?? '这餐'}',
+            ),
+          );
+        },
+      ),
+    ];
+  }
+
+  List<DropdownMenuItem<String?>> _exerciseItems() {
+    if (exerciseHistory.isEmpty) {
+      return const [
+        DropdownMenuItem<String?>(
+          value: null,
+          child: _DropdownText('暂无可关联运动'),
+        ),
+      ];
+    }
+
+    return [
+      const DropdownMenuItem<String?>(
+        value: null,
+        child: _DropdownText('不关联'),
+      ),
+      ...exerciseHistory.take(6).map(
+        (exercise) => DropdownMenuItem<String?>(
+          value: '${exercise['id']}',
+          child: _DropdownText(
+            '${exercise['motion_name'] ?? '运动'} · ${exercise['duration']}分钟',
+          ),
+        ),
+      ),
+    ];
+  }
+}
+
+class _AssociationDropdown extends StatelessWidget {
+  final String? value;
+  final String label;
+  final String emptyText;
+  final List<DropdownMenuItem<String?>> items;
+  final InputDecoration decoration;
+  final ValueChanged<String?> onChanged;
+
+  const _AssociationDropdown({
+    required this.value,
+    required this.label,
+    required this.emptyText,
+    required this.items,
+    required this.decoration,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return DropdownButtonFormField<String?>(
+      initialValue: value,
+      isExpanded: true,
+      decoration: decoration,
+      hint: _DropdownText(
+        items.length == 1 && items.first.value == null ? emptyText : '不关联',
+      ),
+      items: items,
+      selectedItemBuilder: (context) => items
+          .map(
+            (item) => Align(
+              alignment: Alignment.centerLeft,
+              child: _DropdownText(
+                item.child is _DropdownText
+                    ? (item.child as _DropdownText).text
+                    : label,
+              ),
+            ),
+          )
+          .toList(),
+      onChanged: onChanged,
+    );
+  }
+}
+
+class _DropdownText extends StatelessWidget {
+  final String text;
+
+  const _DropdownText(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      text,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    );
   }
 }
