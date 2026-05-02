@@ -60,6 +60,126 @@ class AnalysisService {
     '牛奶',
   ];
 
+  static const List<String> _fruitKeywords = [
+    '苹果',
+    '香蕉',
+    '橙',
+    '橘',
+    '梨',
+    '葡萄',
+    '草莓',
+    '芒果',
+    '西瓜',
+    '蓝莓',
+    '樱桃',
+    '猕猴桃',
+    '水果',
+  ];
+
+  static const List<String> _sweetKeywords = [
+    '奶茶',
+    '甜点',
+    '蛋糕',
+    '饼干',
+    '巧克力',
+    '糖',
+    '甜',
+    '冰淇淋',
+    '蛋挞',
+    '甜品',
+  ];
+
+  static const List<String> _proteinVegKeywords = [
+    '鸡胸',
+    '鱼',
+    '虾',
+    '豆腐',
+    '蔬菜',
+    '沙拉',
+    '鸡蛋',
+    '牛奶',
+    '瘦肉',
+    '青菜',
+    '西兰花',
+  ];
+
+  static const List<String> _stapleKeywords = [
+    '米饭',
+    '白米',
+    '粥',
+    '面条',
+    '面包',
+    '馒头',
+    '包子',
+    '饺子',
+    '炒饭',
+    '盖饭',
+    '土豆',
+    '红薯',
+    '玉米',
+  ];
+
+  static const List<FoodSignal> _defaultHomeFoodSignals = [
+    FoodSignal(
+      name: '燕麦牛奶',
+      level: 'green',
+      reason: '低 GI 主食搭配蛋白质，早餐更顶饿，餐后也更容易稳。',
+    ),
+    FoodSignal(
+      name: '鸡胸肉蔬菜沙拉',
+      level: 'green',
+      reason: '蛋白质加蔬菜，饱腹感更好，适合作为清爽的一餐。',
+    ),
+    FoodSignal(
+      name: '白米饭',
+      level: 'yellow',
+      reason: '可以吃，重点看份量，最好搭配蛋白质和蔬菜一起吃。',
+    ),
+    FoodSignal(
+      name: '奶茶甜点',
+      level: 'red',
+      reason: '高糖高热量更容易带来波动，建议减少频率，偶尔少量。',
+    ),
+  ];
+
+  static const List<FoodSignal> _homeFoodFillers = [
+    ..._defaultHomeFoodSignals,
+    FoodSignal(
+      name: '豆腐蔬菜汤',
+      level: 'green',
+      reason: '豆制品和蔬菜能补充蛋白质与纤维，适合给餐桌加一点多样性。',
+    ),
+    FoodSignal(
+      name: '鱼虾配绿叶菜',
+      level: 'green',
+      reason: '优质蛋白搭配绿叶菜，负担更轻，也更适合长期坚持。',
+    ),
+    FoodSignal(
+      name: '全麦面包鸡蛋',
+      level: 'yellow',
+      reason: '比甜面包更稳，但仍要看份量，搭配鸡蛋会更耐饿。',
+    ),
+    FoodSignal(
+      name: '油炸主食',
+      level: 'red',
+      reason: '油脂和精制主食叠加时负担更重，建议少吃并控制份量。',
+    ),
+  ];
+
+  static const List<FoodSignal> _diversityHomeFoodSignals = [
+    FoodSignal(
+      name: '豆腐蔬菜汤',
+      level: 'green',
+      reason: '最近记录偏集中，可以加一份豆制品和蔬菜，让饮食更多样。',
+    ),
+    FoodSignal(
+      name: '鱼虾配绿叶菜',
+      level: 'green',
+      reason: '最近餐食种类偏少，可以加点鱼虾和绿叶菜，营养更均衡。',
+    ),
+  ];
+
+
   static const Map<String, List<String>> _homeReminderMessages = {
     'highGlucose': [
       '最近一次血糖偏高，下一餐先少甜饮、主食留一点余地，饭后慢走 10 分钟。',
@@ -210,6 +330,43 @@ class AnalysisService {
     return result.take(4).toList();
   }
 
+  static List<FoodSignal> buildHomeFoodSignals(
+    List<Map<String, dynamic>> mealItems,
+    List<Map<String, dynamic>> glucoseRecords, [
+    List<Map<String, dynamic>> statusRecords = const [],
+  ]) {
+    final mealObservations = _buildMealObservations(mealItems);
+    if (mealObservations.isEmpty) {
+      return _defaultHomeFoodSignals;
+    }
+
+    _attachGlucoseToMeals(mealObservations, glucoseRecords);
+    _attachStatusToMeals(mealObservations, statusRecords);
+
+    final pairedCount = mealObservations
+        .where((meal) => meal.glucoseCount > 0 || meal.statusCount > 0)
+        .length;
+    final personalSignals = _buildFoodSignalsFromObservations(
+      mealObservations,
+    );
+    final needsDiversity = _hasNarrowRecentDiet(mealObservations);
+
+    final result = <FoodSignal>[];
+    if (mealObservations.length >= 6 && pairedCount >= 2) {
+      result.addAll(personalSignals.take(4));
+    } else {
+      result.addAll(_buildObservedHomeSuggestions(mealObservations).take(2));
+    }
+
+    if (needsDiversity) {
+      for (final signal in _diversityHomeFoodSignals) {
+        if (_addSignalIfMissing(result, signal, mealObservations)) break;
+      }
+    }
+    _fillHomeFoodSignals(result, mealObservations);
+    return result.take(4).toList();
+  }
+
   static List<_MealObservation> _buildMealObservations(
     List<Map<String, dynamic>> mealItems,
   ) {
@@ -230,6 +387,121 @@ class AnalysisService {
     final meals = byMeal.values.toList()
       ..sort((a, b) => b.mealTime.compareTo(a.mealTime));
     return meals;
+  }
+
+  static List<FoodSignal> _buildFoodSignalsFromObservations(
+    List<_MealObservation> mealObservations,
+  ) {
+    final foodStats = <String, _FoodStats>{};
+    for (final meal in mealObservations) {
+      for (final name in meal.foodNames) {
+        foodStats.putIfAbsent(name, () => _FoodStats(name)).addMeal(meal);
+      }
+    }
+
+    final result = foodStats.values.map(_classifyFoodStats).toList()
+      ..sort((a, b) {
+        final rank = {'red': 0, 'yellow': 1, 'green': 2};
+        final levelCompare = (rank[a.level] ?? 3).compareTo(rank[b.level] ?? 3);
+        if (levelCompare != 0) return levelCompare;
+        return a.name.compareTo(b.name);
+    });
+    return result;
+  }
+
+  static List<FoodSignal> _buildObservedHomeSuggestions(
+    List<_MealObservation> meals,
+  ) {
+    final result = <FoodSignal>[];
+    final seen = <String>{};
+    for (final meal in meals) {
+      for (final name in meal.foodNames) {
+        final normalized = _normalizeFoodName(name);
+        if (normalized.isEmpty || seen.contains(normalized)) continue;
+        seen.add(normalized);
+        result.add(_buildNaturalObservedSignal(name));
+      }
+    }
+    return result;
+  }
+
+  static FoodSignal _buildNaturalObservedSignal(String name) {
+    if (_containsAny(name, _fruitKeywords)) {
+      return FoodSignal(
+        name: name,
+        level: 'green',
+        reason: '水果可以吃，尽量别单吃，搭配正餐或一点酸奶、坚果会更稳。',
+      );
+    }
+    if (_containsAny(name, _sweetKeywords)) {
+      return FoodSignal(
+        name: name,
+        level: 'red',
+        reason: '这类甜口更适合少量尝一尝，放在正餐里通常比空腹单吃更稳。',
+      );
+    }
+    if (_containsAny(name, _stapleKeywords)) {
+      return FoodSignal(
+        name: name,
+        level: 'yellow',
+        reason: '这类主食可以吃，记得搭配蛋白质和蔬菜，别让一餐太单一。',
+      );
+    }
+    if (_containsAny(name, _proteinVegKeywords)) {
+      return FoodSignal(
+        name: name,
+        level: 'green',
+        reason: '这类搭配更适合日常保持，继续和蔬菜、蛋白质一起吃会更均衡。',
+      );
+    }
+    return FoodSignal(
+      name: name,
+      level: 'yellow',
+      reason: '先把这类食物和当天其他餐一起看，慢慢就能看出你自己更适合的搭配。',
+    );
+  }
+
+  static bool _hasNarrowRecentDiet(List<_MealObservation> meals) {
+    final recentFoods = meals
+        .take(7)
+        .expand((meal) => meal.foodNames)
+        .map(_normalizeFoodName)
+        .where((name) => name.isNotEmpty)
+        .toSet();
+    return meals.length >= 6 && recentFoods.length < 3;
+  }
+
+  static void _fillHomeFoodSignals(
+    List<FoodSignal> result,
+    List<_MealObservation> meals,
+  ) {
+    for (final signal in _homeFoodFillers) {
+      if (result.length >= 4) return;
+      _addSignalIfMissing(result, signal);
+    }
+  }
+
+  static bool _addSignalIfMissing(
+    List<FoodSignal> result,
+    FoodSignal signal, [
+    List<_MealObservation> meals = const [],
+  ]) {
+    final signalName = _normalizeFoodName(signal.name);
+    final existingNames = {
+      ...result.map((item) => _normalizeFoodName(item.name)),
+      ...meals.expand((meal) => meal.foodNames).map(_normalizeFoodName),
+    };
+    if (existingNames.contains(signalName)) return false;
+    result.add(signal);
+    return true;
+  }
+
+  static bool _containsAny(String value, List<String> keywords) {
+    return keywords.any(value.contains);
+  }
+
+  static String _normalizeFoodName(String value) {
+    return value.replaceAll(RegExp(r'\s+'), '').trim();
   }
 
   static void _attachGlucoseToMeals(
@@ -280,6 +552,7 @@ class AnalysisService {
       }
       if (meal == null) continue;
 
+      meal.statusCount += 1;
       final status = '${record['status_level'] ?? ''}';
       if (status == '极度疲劳' || status == '略感疲惫') {
         meal.badStatusCount += 1;
@@ -559,6 +832,7 @@ class _MealObservation {
   int highGlucoseCount = 0;
   int lowGlucoseCount = 0;
   int stableGlucoseCount = 0;
+  int statusCount = 0;
   int badStatusCount = 0;
   int goodStatusCount = 0;
 

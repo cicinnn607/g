@@ -36,7 +36,7 @@ class HomePage extends StatelessWidget {
               const SizedBox(height: 16),
               _TodayOverview(provider: provider),
               const SizedBox(height: 16),
-              _FoodSignals(signals: provider.foodSignals),
+              _FoodSignals(signals: provider.homeFoodSignals),
               const SizedBox(height: 16),
               _ExerciseSuggestion(text: provider.exerciseSuggestion),
               const SizedBox(height: 16),

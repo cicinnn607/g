@@ -51,6 +51,12 @@ class HealthProvider with ChangeNotifier {
     _statusHistory,
   );
 
+  List<FoodSignal> get homeFoodSignals => AnalysisService.buildHomeFoodSignals(
+    _mealItems,
+    _glucoseHistory,
+    _statusHistory,
+  );
+
   String get exerciseSuggestion => AnalysisService.buildExerciseSuggestion(
     _glucoseHistory,
     _mealHistory,

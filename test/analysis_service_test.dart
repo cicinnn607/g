@@ -189,6 +189,105 @@ void main() {
     expect(signals.single.isRed, isTrue);
   });
 
+  test('首页红绿灯无餐食时返回通用饮食建议', () {
+    final signals = AnalysisService.buildHomeFoodSignals(const [], const []);
+
+    expect(signals.length, 4);
+    expect(signals.where((signal) => signal.isGreen), hasLength(2));
+    expect(signals.where((signal) => signal.isYellow), hasLength(1));
+    expect(signals.where((signal) => signal.isRed), hasLength(1));
+    expect(signals.map((signal) => signal.reason).join(), isNot(contains('数据不足')));
+  });
+
+  test('首页红绿灯少量餐食时混合用户食物和通用补位', () {
+    final signals = AnalysisService.buildHomeFoodSignals(
+      [
+        _mealItem('meal_1', '苹果', DateTime(2026, 4, 30, 12)),
+        _mealItem('meal_2', '鸡蛋', DateTime(2026, 5, 1, 8)),
+        _mealItem('meal_3', '面条', DateTime(2026, 5, 1, 12)),
+      ],
+      const [],
+    );
+
+    expect(signals.length, 4);
+    expect(
+      signals.any((signal) => ['苹果', '鸡蛋', '面条'].contains(signal.name)),
+      isTrue,
+    );
+    expect(signals.any((signal) => signal.name == '燕麦牛奶'), isTrue);
+    expect(signals.map((signal) => signal.reason).join(), isNot(contains('数据不足')));
+    expect(signals.any((signal) => signal.reason.contains('已经记录过它')), isFalse);
+  });
+
+  test('首页红绿灯水果类会给自然建议', () {
+    final signals = AnalysisService.buildHomeFoodSignals(
+      [_mealItem('meal_1', '苹果', DateTime(2026, 4, 30, 12))],
+      const [],
+    );
+
+    expect(signals.first.name, '苹果');
+    expect(signals.first.reason, contains('别单吃'));
+  });
+
+  test('首页红绿灯足够数据时优先返回个人结果', () {
+    final signals = AnalysisService.buildHomeFoodSignals(
+      [
+        _mealItem('oat_1', '燕麦牛奶', DateTime(2026, 4, 28, 8)),
+        _mealItem('oat_2', '燕麦牛奶', DateTime(2026, 4, 29, 8)),
+        _mealItem('cake_1', '蛋糕', DateTime(2026, 4, 28, 13)),
+        _mealItem('cake_2', '蛋糕', DateTime(2026, 4, 29, 13)),
+        _mealItem('rice_1', '米饭', DateTime(2026, 4, 30, 12)),
+        _mealItem('noodle_1', '面条', DateTime(2026, 5, 1, 12)),
+      ],
+      [
+        _glucose(6.2, DateTime(2026, 4, 28, 9, 30)),
+        _glucose(6.4, DateTime(2026, 4, 29, 9, 30)),
+        _glucose(11.5, DateTime(2026, 4, 28, 14)),
+        _glucose(11.2, DateTime(2026, 4, 29, 14)),
+      ],
+    );
+
+    expect(signals.first.name, '蛋糕');
+    expect(signals.any((signal) => signal.name == '燕麦牛奶'), isTrue);
+    expect(signals.first.reason, contains('波动'));
+  });
+
+  test('首页红绿灯长期单一饮食时补充多样化建议', () {
+    final signals = AnalysisService.buildHomeFoodSignals(
+      [
+        _mealItem('rice_1', '米饭', DateTime(2026, 4, 25, 12)),
+        _mealItem('rice_2', '米饭', DateTime(2026, 4, 26, 12)),
+        _mealItem('rice_3', '米饭', DateTime(2026, 4, 27, 12)),
+        _mealItem('rice_4', '米饭', DateTime(2026, 4, 28, 12)),
+        _mealItem('rice_5', '米饭', DateTime(2026, 4, 29, 12)),
+        _mealItem('rice_6', '米饭', DateTime(2026, 4, 30, 12)),
+      ],
+      [
+        _glucose(6.2, DateTime(2026, 4, 29, 13, 30)),
+        _glucose(6.4, DateTime(2026, 4, 30, 13, 30)),
+      ],
+    );
+
+    expect(
+      signals.any((signal) => signal.reason.contains('多样') || signal.reason.contains('均衡')),
+      isTrue,
+    );
+  });
+
+  test('首页红绿灯补位建议不会重复展示同名食物', () {
+    final signals = AnalysisService.buildHomeFoodSignals(
+      [
+        _mealItem('meal_1', '燕麦牛奶', DateTime(2026, 4, 30, 8)),
+        _mealItem('meal_2', '白米饭', DateTime(2026, 4, 30, 12)),
+        _mealItem('meal_3', '奶茶甜点', DateTime(2026, 4, 30, 15)),
+      ],
+      const [],
+    );
+
+    final uniqueNames = signals.map((signal) => signal.name).toSet();
+    expect(uniqueNames.length, signals.length);
+  });
+
   test('首页提醒在无数据时返回记录引导', () {
     final reminder = AnalysisService.buildHomeReminder(
       glucoseRecords: const [],
