@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../core/app_messages.dart';
 import '../core/app_style.dart';
 import '../provider/health_provider.dart';
 import '../services/analysis_service.dart';
@@ -17,6 +18,8 @@ class _ExerciseRecordPageState extends State<ExerciseRecordPage> {
   String? _motionId;
   double _duration = 15;
   DateTime _exerciseTime = DateTime.now();
+  bool _saving = false;
+  bool _showAllExercises = false;
 
   Future<void> _pickDateTime() async {
     final date = await showDatePicker(
@@ -43,18 +46,25 @@ class _ExerciseRecordPageState extends State<ExerciseRecordPage> {
   }
 
   Future<void> _save(HealthProvider provider) async {
+    if (_saving) return;
     final motionId = _currentMotionId(provider);
     if (motionId == null) return;
-    await provider.repository.saveExercise(
-      motionId: motionId,
-      duration: _duration.round(),
-      exerciseTime: _exerciseTime,
-    );
-    await provider.loadDashboardData();
-    if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('运动已记录')));
+    setState(() => _saving = true);
+    try {
+      await provider.repository.saveExercise(
+        motionId: motionId,
+        duration: _duration.round(),
+        exerciseTime: _exerciseTime,
+      );
+      await provider.loadDashboardData();
+      if (!mounted) return;
+      _showSnack('运动已记录');
+    } catch (error) {
+      if (!mounted) return;
+      _showSnack(friendlyActionError(error, action: '保存运动'));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   Future<void> _delete(String id) async {
@@ -81,6 +91,7 @@ class _ExerciseRecordPageState extends State<ExerciseRecordPage> {
       provider.weight,
       _duration.round(),
     );
+    final visibleCatalog = _visibleExerciseCatalog(provider, selectedId);
 
     return Scaffold(
       appBar: AppBar(title: const Text('运动')),
@@ -95,7 +106,7 @@ class _ExerciseRecordPageState extends State<ExerciseRecordPage> {
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
-                  children: provider.exerciseCatalog
+                  children: visibleCatalog
                       .map(
                         (item) => ChoiceChip(
                           label: Text('${item['name']}'),
@@ -107,6 +118,24 @@ class _ExerciseRecordPageState extends State<ExerciseRecordPage> {
                       )
                       .toList(),
                 ),
+                if (provider.exerciseCatalog.length > 8) ...[
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      style: AppButtonStyles.quiet,
+                      onPressed: () => setState(
+                        () => _showAllExercises = !_showAllExercises,
+                      ),
+                      icon: Icon(
+                        _showAllExercises
+                            ? Icons.keyboard_arrow_up
+                            : Icons.keyboard_arrow_down,
+                      ),
+                      label: Text(_showAllExercises ? '收起运动' : '显示全部运动'),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 16),
                 Container(
                   width: double.infinity,
@@ -219,10 +248,10 @@ class _ExerciseRecordPageState extends State<ExerciseRecordPage> {
                         borderRadius: BorderRadius.circular(8),
                       ),
                     ),
-                    onPressed: selectedId == null
+                    onPressed: selectedId == null || _saving
                         ? null
                         : () => _save(provider),
-                    child: const Text('保存运动'),
+                    child: Text(_saving ? '保存中' : '保存运动'),
                   ),
                 ),
               ],
@@ -296,6 +325,36 @@ class _ExerciseRecordPageState extends State<ExerciseRecordPage> {
       (item) => '${item['id']}' == _motionId,
     );
     return exists ? _motionId : '${provider.exerciseCatalog.first['id']}';
+  }
+
+  List<Map<String, dynamic>> _visibleExerciseCatalog(
+    HealthProvider provider,
+    String? selectedId,
+  ) {
+    final all = provider.exerciseCatalog;
+    if (_showAllExercises || all.length <= 8) return all;
+
+    final visible = <Map<String, dynamic>>[];
+    final seen = <String>{};
+    for (final item in all.take(8)) {
+      visible.add(item);
+      seen.add('${item['id']}');
+    }
+    if (selectedId != null && !seen.contains(selectedId)) {
+      for (final item in all) {
+        if ('${item['id']}' == selectedId) {
+          visible.add(item);
+          break;
+        }
+      }
+    }
+    return visible;
+  }
+
+  void _showSnack(String text) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(text), backgroundColor: AppColors.primaryDark),
+    );
   }
 
   String _formatDateTime(DateTime value) {

@@ -2,6 +2,8 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
 
+enum NotificationPermissionStatus { allowed, denied, unknown }
+
 class ReminderService {
   ReminderService._();
   static final ReminderService instance = ReminderService._();
@@ -34,24 +36,45 @@ class ReminderService {
     }
   }
 
-  Future<void> requestPermissions() async {
-    final android = _plugin
-        .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin
-        >();
-    await android?.requestNotificationsPermission();
+  Future<NotificationPermissionStatus> requestPermissions() async {
+    try {
+      final android = _plugin
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >();
+      await android?.requestNotificationsPermission();
 
-    final ios = _plugin
-        .resolvePlatformSpecificImplementation<
-          IOSFlutterLocalNotificationsPlugin
-        >();
-    await ios?.requestPermissions(alert: true, badge: true, sound: true);
+      final ios = _plugin
+          .resolvePlatformSpecificImplementation<
+            IOSFlutterLocalNotificationsPlugin
+          >();
+      await ios?.requestPermissions(alert: true, badge: true, sound: true);
 
-    final mac = _plugin
-        .resolvePlatformSpecificImplementation<
-          MacOSFlutterLocalNotificationsPlugin
-        >();
-    await mac?.requestPermissions(alert: true, badge: true, sound: true);
+      final mac = _plugin
+          .resolvePlatformSpecificImplementation<
+            MacOSFlutterLocalNotificationsPlugin
+          >();
+      await mac?.requestPermissions(alert: true, badge: true, sound: true);
+
+      return checkPermissionStatus();
+    } catch (_) {
+      return NotificationPermissionStatus.unknown;
+    }
+  }
+
+  Future<NotificationPermissionStatus> checkPermissionStatus() async {
+    try {
+      final android = _plugin
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >();
+      final enabled = await android?.areNotificationsEnabled();
+      if (enabled == true) return NotificationPermissionStatus.allowed;
+      if (enabled == false) return NotificationPermissionStatus.denied;
+    } catch (_) {
+      return NotificationPermissionStatus.unknown;
+    }
+    return NotificationPermissionStatus.unknown;
   }
 
   Future<void> syncReminders(List<Map<String, dynamic>> reminders) async {

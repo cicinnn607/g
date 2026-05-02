@@ -4,6 +4,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 
+import '../core/app_messages.dart';
 import 'analysis_service.dart';
 import 'supabase_config.dart';
 
@@ -11,18 +12,73 @@ class MealItemDraft {
   final String foodNameRaw;
   final String foodNameConfirmed;
   final double caloriesRaw;
-  final double portionSize;
-  final double caloriesFinal;
+  final double grams;
+  final String servingUnit;
+  final double? caloriesUserOverride;
   final String? imageUrl;
 
   const MealItemDraft({
     required this.foodNameRaw,
     required this.foodNameConfirmed,
     required this.caloriesRaw,
-    required this.portionSize,
-    required this.caloriesFinal,
+    required this.grams,
+    required this.servingUnit,
+    this.caloriesUserOverride,
     this.imageUrl,
   });
+}
+
+class FoodCalorieCatalogItem {
+  final String id;
+  final String name;
+  final List<String> aliases;
+  final double caloriesPer100g;
+  final Map<String, double> servingOptions;
+  final String? category;
+  final String? source;
+  final double similarityScore;
+
+  const FoodCalorieCatalogItem({
+    required this.id,
+    required this.name,
+    required this.aliases,
+    required this.caloriesPer100g,
+    required this.servingOptions,
+    this.category,
+    this.source,
+    this.similarityScore = 0,
+  });
+
+  factory FoodCalorieCatalogItem.fromMap(Map<String, dynamic> row) {
+    final rawServingOptions = row['serving_options'];
+    final servingOptions = <String, double>{};
+    if (rawServingOptions is Map) {
+      rawServingOptions.forEach((key, value) {
+        final grams = double.tryParse('$value');
+        if (grams != null && grams > 0) {
+          servingOptions['$key'] = grams;
+        }
+      });
+    }
+
+    final rawAliases = row['aliases'];
+    final aliases = rawAliases is List
+        ? rawAliases.map((alias) => '$alias').toList()
+        : <String>[];
+
+    return FoodCalorieCatalogItem(
+      id: '${row['id'] ?? ''}',
+      name: '${row['name'] ?? ''}',
+      aliases: aliases,
+      caloriesPer100g:
+          double.tryParse('${row['calories_per_100g'] ?? 0}') ?? 0,
+      servingOptions: servingOptions,
+      category: row['category'] == null ? null : '${row['category']}',
+      source: row['source'] == null ? null : '${row['source']}',
+      similarityScore:
+          double.tryParse('${row['similarity_score'] ?? 0}') ?? 0,
+    );
+  }
 }
 
 class MealRecognitionItem {
@@ -358,7 +414,7 @@ class HealthRepository {
         .maybeSingle();
     if (existing != null) {
       await _seedDefaultBodyMetricIfMissing(client, user.id);
-      await _seedDefaultReminders(client, user.id);
+      await _seedDefaultRemindersIfAvailable(client, user.id);
       return;
     }
 
@@ -374,7 +430,7 @@ class HealthRepository {
     });
 
     await _seedDefaultBodyMetricIfMissing(client, user.id);
-    await _seedDefaultReminders(client, user.id);
+    await _seedDefaultRemindersIfAvailable(client, user.id);
   }
 
   Future<HealthSnapshot> loadSnapshot() async {
@@ -393,7 +449,7 @@ class HealthRepository {
     final exerciseCatalog = await getExerciseCatalog();
     final exercises = await getExerciseLogs(preloadedCatalog: exerciseCatalog);
     final statuses = await getStatuses();
-    final reminders = await getReminders();
+    final reminders = await getRemindersIfAvailable();
 
     return HealthSnapshot(
       profile: profile,
@@ -500,6 +556,7 @@ class HealthRepository {
             .map((item) => '${item['food_name_confirmed']}')
             .where((name) => name.trim().isNotEmpty)
             .join('、'),
+        'serving_summary': formatMealServingSummary(mealItems),
       };
     }).toList();
   }
@@ -610,6 +667,53 @@ class HealthRepository {
     );
   }
 
+  Future<List<Map<String, dynamic>>> getRemindersIfAvailable() async {
+    try {
+      return await getReminders();
+    } catch (error) {
+      if (isMissingSchemaError(error, table: 'reminder_settings')) {
+        return const [];
+      }
+      rethrow;
+    }
+  }
+
+  Future<List<FoodCalorieCatalogItem>> searchFoodCalorieCatalog(
+    String query, {
+    int limit = 8,
+  }) async {
+    final client = _client;
+    if (client == null || currentUserId == null || query.trim().isEmpty) {
+      return const [];
+    }
+
+    try {
+      final data = await client.rpc(
+        'search_food_calorie_catalog',
+        params: {
+          'query_text': query.trim(),
+          'result_limit': limit,
+        },
+      );
+      return _rows(data)
+          .map(FoodCalorieCatalogItem.fromMap)
+          .where((item) => item.name.trim().isNotEmpty)
+          .toList();
+    } catch (error) {
+      if (isMissingSchemaError(error, table: 'food_calorie_catalog')) {
+        return const [];
+      }
+      final message = '$error'.toLowerCase();
+      if (message.contains('failed host lookup') ||
+          message.contains('socketexception') ||
+          message.contains('network') ||
+          message.contains('connection')) {
+        return const [];
+      }
+      return const [];
+    }
+  }
+
   Future<void> saveProfile({
     required String displayName,
     required String gender,
@@ -680,20 +784,34 @@ class HealthRepository {
         '$userId/draft_${_uuid.v4()}/${DateTime.now().millisecondsSinceEpoch}$extension';
     final bytes = await file.readAsBytes();
 
-    await client.storage.from(mealImageBucket).uploadBinary(
-          storagePath,
-          bytes,
-          fileOptions: FileOptions(
-            contentType: _contentType(extension),
-            upsert: false,
-          ),
-        );
+    try {
+      await client.storage.from(mealImageBucket).uploadBinary(
+            storagePath,
+            bytes,
+            fileOptions: FileOptions(
+              contentType: _contentType(extension),
+              upsert: false,
+            ),
+          );
+    } catch (error) {
+      throw StateError(friendlyMealRecognitionError(error));
+    }
 
-    final response = await client.functions.invoke(
-      'recognize-meal',
-      body: {'storage_path': storagePath},
-    );
+    dynamic response;
+    try {
+      response = await client.functions.invoke(
+        'recognize-meal',
+        body: {'storage_path': storagePath},
+      );
+    } catch (error) {
+      throw StateError(friendlyMealRecognitionError(error));
+    }
     final data = response.data;
+    if (data is Map && data['error'] != null) {
+      throw StateError(
+        friendlyMealRecognitionError(Exception('${data['error']}')),
+      );
+    }
     final rawItems = data is Map ? data['items'] : null;
     final items = rawItems is List
         ? rawItems
@@ -743,8 +861,13 @@ class HealthRepository {
                         item.foodNameConfirmed.trim().isEmpty
                             ? '未命名食物'
                             : item.foodNameConfirmed.trim(),
-                    'calories_raw': _caloriesRawForGeneratedColumn(item),
-                    'portion_size': item.portionSize,
+                    'calories_raw': item.caloriesRaw,
+                    'portion_size': 1.0,
+                    'grams': item.grams,
+                    'serving_unit': item.servingUnit.trim().isEmpty
+                        ? 'g'
+                        : item.servingUnit.trim(),
+                    'calories_user_override': item.caloriesUserOverride,
                     'image_url': item.imageUrl,
                   },
                 )
@@ -763,15 +886,6 @@ class HealthRepository {
         .delete()
         .eq('id', mealId)
         .eq('user_id', _requireUserId());
-  }
-
-  double _caloriesRawForGeneratedColumn(MealItemDraft item) {
-    final portion = item.portionSize <= 0 ? 1.0 : item.portionSize;
-    final expectedFinal = item.caloriesRaw * portion;
-    if ((item.caloriesFinal - expectedFinal).abs() < 0.05) {
-      return item.caloriesRaw;
-    }
-    return double.parse((item.caloriesFinal / portion).toStringAsFixed(1));
   }
 
   Future<void> saveExercise({
@@ -957,6 +1071,20 @@ class HealthRepository {
     ]);
   }
 
+  Future<void> _seedDefaultRemindersIfAvailable(
+    SupabaseClient client,
+    String userId,
+  ) async {
+    try {
+      await _seedDefaultReminders(client, userId);
+    } catch (error) {
+      if (isMissingSchemaError(error, table: 'reminder_settings')) {
+        return;
+      }
+      rethrow;
+    }
+  }
+
   HealthSnapshot _defaultSnapshot() {
     return HealthSnapshot(
       profile: _defaultProfile(),
@@ -989,6 +1117,34 @@ class HealthRepository {
         .whereType<Map>()
         .map((row) => Map<String, dynamic>.from(row))
         .toList();
+  }
+
+  static String formatMealServingSummary(List<Map<String, dynamic>> items) {
+    return items.map(formatMealItemServingSummary).where((summary) {
+      return summary.trim().isNotEmpty;
+    }).join('、');
+  }
+
+  static String formatMealItemServingSummary(Map<String, dynamic> item) {
+    final name = '${item['food_name_confirmed'] ?? item['food_name_raw'] ?? ''}'
+        .trim();
+    final servingUnit = '${item['serving_unit'] ?? ''}'.trim();
+    final grams = double.tryParse('${item['grams'] ?? ''}') ?? 0;
+    final calories = double.tryParse('${item['calories_final'] ?? ''}') ?? 0;
+    final parts = <String>[];
+    if (name.isNotEmpty) parts.add(name);
+    if (servingUnit.isNotEmpty && servingUnit != 'g') {
+      parts.add(servingUnit);
+    } else if (grams > 0) {
+      parts.add('${_formatCompactNumber(grams)}g');
+    }
+    parts.add('${calories.toStringAsFixed(0)} kcal');
+    return parts.join(' · ');
+  }
+
+  static String _formatCompactNumber(double value) {
+    if (value == value.roundToDouble()) return value.toStringAsFixed(0);
+    return value.toStringAsFixed(1);
   }
 
   String _nameFromEmail(String? email) {

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
+import '../core/app_messages.dart';
 import '../core/app_style.dart';
 import '../provider/health_provider.dart';
 import '../services/analysis_service.dart';
@@ -71,14 +72,22 @@ class _DietRecordPageState extends State<DietRecordPage> {
       final result = await repository.recognizeMealImage(picked);
       final drafts = result.items.isEmpty
           ? [_FoodDraft.empty(imageUrl: result.storagePath)]
-          : result.items
-              .map(
-                (item) => _FoodDraft.fromRecognition(
+          : await Future.wait(
+              result.items.map((item) async {
+                final draft = _FoodDraft.fromRecognition(
                   item,
                   imageUrl: result.storagePath,
-                ),
-              )
-              .toList();
+                );
+                final matches = await repository.searchFoodCalorieCatalog(
+                  item.foodNameRaw,
+                );
+                draft.catalogMatches = matches;
+                if (matches.isNotEmpty) {
+                  draft.applyCatalogItem(matches.first);
+                }
+                return draft;
+              }),
+            );
       _replaceDrafts(drafts);
       if (result.items.isEmpty) {
         _showSnack('没识别清楚，可以手动填一下');
@@ -110,8 +119,9 @@ class _DietRecordPageState extends State<DietRecordPage> {
             foodNameRaw: draft.rawName.trim(),
             foodNameConfirmed: draft.confirmedName.trim(),
             caloriesRaw: draft.rawCalories,
-            portionSize: draft.portion,
-            caloriesFinal: draft.finalCalories,
+            grams: draft.grams,
+            servingUnit: draft.servingUnit,
+            caloriesUserOverride: draft.caloriesUserOverride,
             imageUrl: draft.imageUrl,
           ),
         )
@@ -139,7 +149,7 @@ class _DietRecordPageState extends State<DietRecordPage> {
       });
       _showSnack('这一餐记好了');
     } catch (error) {
-      _showSnack('$error');
+      _showSnack(friendlyActionError(error, action: '保存饮食'));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -264,6 +274,12 @@ class _DietRecordPageState extends State<DietRecordPage> {
                 draft: _drafts[index],
                 canRemove: _drafts.length > 1,
                 onChanged: () => setState(() {}),
+                onSearchCatalog: (query) {
+                  return context
+                      .read<HealthProvider>()
+                      .repository
+                      .searchFoodCalorieCatalog(query);
+                },
                 onRemove: () {
                   final removed = _drafts.removeAt(index);
                   removed.dispose();
@@ -329,7 +345,7 @@ class _DietRecordPageState extends State<DietRecordPage> {
                             ),
                           ),
                           title: Text(
-                            '${meal['food_names'] ?? '这一餐'}',
+                            '${meal['serving_summary'] ?? meal['food_names'] ?? '这一餐'}',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(fontWeight: FontWeight.w800),
@@ -378,12 +394,14 @@ class _DietRecordPageState extends State<DietRecordPage> {
   }
 }
 
-class _FoodDraftCard extends StatelessWidget {
+class _FoodDraftCard extends StatefulWidget {
   final int index;
   final _FoodDraft draft;
   final bool canRemove;
   final VoidCallback onChanged;
   final VoidCallback onRemove;
+  final Future<List<FoodCalorieCatalogItem>> Function(String query)
+      onSearchCatalog;
 
   const _FoodDraftCard({
     required this.index,
@@ -391,16 +409,49 @@ class _FoodDraftCard extends StatelessWidget {
     required this.canRemove,
     required this.onChanged,
     required this.onRemove,
+    required this.onSearchCatalog,
   });
+
+  @override
+  State<_FoodDraftCard> createState() => _FoodDraftCardState();
+}
+
+class _FoodDraftCardState extends State<_FoodDraftCard> {
+  int _searchToken = 0;
+  bool _searching = false;
+
+  _FoodDraft get draft => widget.draft;
+
+  Future<void> _searchCatalog(String query) async {
+    final normalized = query.trim();
+    final token = ++_searchToken;
+    if (normalized.length < 2) {
+      setState(() => _searching = false);
+      draft.catalogMatches = const [];
+      widget.onChanged();
+      return;
+    }
+
+    setState(() => _searching = true);
+    final matches = await widget.onSearchCatalog(normalized);
+    if (!mounted || token != _searchToken) return;
+
+    setState(() => _searching = false);
+    draft.catalogMatches = matches;
+    if (matches.isNotEmpty) {
+      draft.applyCatalogItem(matches.first);
+    }
+    widget.onChanged();
+  }
 
   @override
   Widget build(BuildContext context) {
     return SoftCard(
-      title: '食物 ${index + 1}',
-      trailing: canRemove
+      title: '食物 ${widget.index + 1}',
+      trailing: widget.canRemove
           ? IconButton(
               tooltip: '删除',
-              onPressed: onRemove,
+              onPressed: widget.onRemove,
               icon: const Icon(Icons.close, color: AppColors.muted),
             )
           : null,
@@ -410,65 +461,101 @@ class _FoodDraftCard extends StatelessWidget {
           TextField(
             controller: draft.rawNameCtrl,
             decoration: _fieldDecoration('识别名称', Icons.image_search),
-            onChanged: (_) => onChanged(),
+            onChanged: (_) => widget.onChanged(),
           ),
           const SizedBox(height: 12),
           TextField(
             controller: draft.confirmedNameCtrl,
             decoration: _fieldDecoration('确认后的食物名', Icons.edit_outlined),
-            onChanged: (_) => onChanged(),
+            onChanged: _searchCatalog,
           ),
           const SizedBox(height: 12),
           TextField(
             controller: draft.rawCalCtrl,
             keyboardType: TextInputType.number,
             decoration: _fieldDecoration(
-              '典型热量 kcal',
+              '每100g热量 kcal',
               Icons.local_fire_department_outlined,
             ),
             onChanged: (_) {
               draft.manualFinalCalories = false;
               draft.syncFinalCalories();
-              onChanged();
+              widget.onChanged();
             },
           ),
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              const Expanded(child: Text('份量系数', style: AppTextStyles.section)),
-              Text(
-                '${draft.portion.toStringAsFixed(1)} 份',
-                style: const TextStyle(
-                  fontWeight: FontWeight.w900,
-                  color: AppColors.primaryDark,
-                ),
-              ),
-            ],
-          ),
-          Slider(
-            value: draft.portion,
-            min: 0.5,
-            max: 2.0,
-            divisions: 15,
-            activeColor: AppColors.primary,
-            label: draft.portion.toStringAsFixed(1),
-            onChanged: (value) {
-              draft.portion = double.parse(value.toStringAsFixed(1));
+          if (_searching) ...[
+            const SizedBox(height: 8),
+            const LinearProgressIndicator(
+              minHeight: 2,
+              color: AppColors.primary,
+              backgroundColor: AppColors.line,
+            ),
+          ],
+          if (draft.catalogMatches.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: draft.catalogMatches.take(4).map((item) {
+                return ActionChip(
+                  label: Text(
+                    '${item.name} · '
+                    '${item.caloriesPer100g.toStringAsFixed(0)} kcal/100g',
+                  ),
+                  onPressed: () {
+                    setState(() => draft.applyCatalogItem(item));
+                    widget.onChanged();
+                  },
+                );
+              }).toList(),
+            ),
+          ],
+          if (draft.servingOptions.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            const Text('常见份量', style: AppTextStyles.section),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: draft.servingOptions.entries.map((entry) {
+                final selected = draft.servingUnit == entry.key;
+                return ChoiceChip(
+                  label: Text(
+                    '${entry.key} · ${entry.value.toStringAsFixed(0)}g',
+                  ),
+                  selected: selected,
+                  selectedColor: AppColors.primarySoft,
+                  onSelected: (_) {
+                    setState(() => draft.selectServing(entry.key, entry.value));
+                    widget.onChanged();
+                  },
+                );
+              }).toList(),
+            ),
+          ],
+          const SizedBox(height: 12),
+          TextField(
+            controller: draft.gramsCtrl,
+            keyboardType: TextInputType.number,
+            decoration: _fieldDecoration('克重 g', Icons.scale_outlined),
+            onChanged: (_) {
+              draft.servingUnit = 'g';
               draft.manualFinalCalories = false;
               draft.syncFinalCalories();
-              onChanged();
+              widget.onChanged();
             },
           ),
+          const SizedBox(height: 12),
           TextField(
             controller: draft.finalCalCtrl,
             keyboardType: TextInputType.number,
             decoration: _fieldDecoration(
-              '最终热量 kcal（可直接改）',
+              '最终热量 kcal（可手动覆盖）',
               Icons.calculate_outlined,
             ),
             onChanged: (_) {
               draft.manualFinalCalories = true;
-              onChanged();
+              widget.onChanged();
             },
           ),
         ],
@@ -494,24 +581,31 @@ class _FoodDraft {
   final TextEditingController rawNameCtrl;
   final TextEditingController confirmedNameCtrl;
   final TextEditingController rawCalCtrl;
+  final TextEditingController gramsCtrl;
   final TextEditingController finalCalCtrl;
   final String? imageUrl;
-  double portion;
+  String servingUnit;
+  Map<String, double> servingOptions;
+  List<FoodCalorieCatalogItem> catalogMatches;
   bool manualFinalCalories = false;
 
   _FoodDraft({
     required String rawName,
     required String confirmedName,
     required double rawCalories,
-    required this.portion,
+    required double grams,
+    required this.servingUnit,
+    required this.servingOptions,
+    required this.catalogMatches,
     required this.imageUrl,
   })  : rawNameCtrl = TextEditingController(text: rawName),
         confirmedNameCtrl = TextEditingController(text: confirmedName),
         rawCalCtrl = TextEditingController(text: rawCalories.toStringAsFixed(0)),
+        gramsCtrl = TextEditingController(text: grams.toStringAsFixed(0)),
         finalCalCtrl = TextEditingController(
-          text: AnalysisService.calculateMealCalories(
+          text: AnalysisService.calculateMealCaloriesByGrams(
             rawCalories,
-            portion,
+            grams,
           ).toStringAsFixed(1),
         );
 
@@ -520,7 +614,10 @@ class _FoodDraft {
       rawName: '',
       confirmedName: '',
       rawCalories: 0,
-      portion: 1,
+      grams: 0,
+      servingUnit: 'g',
+      servingOptions: const {},
+      catalogMatches: const [],
       imageUrl: imageUrl,
     );
   }
@@ -533,7 +630,10 @@ class _FoodDraft {
       rawName: item.foodNameRaw,
       confirmedName: item.foodNameRaw,
       rawCalories: item.caloriesRaw,
-      portion: 1,
+      grams: 100,
+      servingUnit: 'g',
+      servingOptions: const {},
+      catalogMatches: const [],
       imageUrl: imageUrl,
     );
   }
@@ -541,15 +641,45 @@ class _FoodDraft {
   String get rawName => rawNameCtrl.text;
   String get confirmedName => confirmedNameCtrl.text;
   double get rawCalories => double.tryParse(rawCalCtrl.text) ?? 0;
+  double get grams => double.tryParse(gramsCtrl.text) ?? 0;
   double get finalCalories =>
       double.tryParse(finalCalCtrl.text) ??
-      AnalysisService.calculateMealCalories(rawCalories, portion);
+      AnalysisService.calculateMealCaloriesByGrams(rawCalories, grams);
+  double? get caloriesUserOverride {
+    if (!manualFinalCalories) return null;
+    final value = double.tryParse(finalCalCtrl.text);
+    if (value == null || value < 0) return null;
+    return value;
+  }
+
+  void applyCatalogItem(FoodCalorieCatalogItem item) {
+    if (confirmedNameCtrl.text.trim().isEmpty ||
+        confirmedNameCtrl.text.trim() == rawNameCtrl.text.trim()) {
+      confirmedNameCtrl.text = item.name;
+    }
+    rawCalCtrl.text = item.caloriesPer100g.toStringAsFixed(0);
+    servingOptions = item.servingOptions;
+    if (servingOptions.isNotEmpty && grams <= 0) {
+      final first = servingOptions.entries.first;
+      selectServing(first.key, first.value);
+      return;
+    }
+    manualFinalCalories = false;
+    syncFinalCalories();
+  }
+
+  void selectServing(String label, double grams) {
+    servingUnit = label;
+    gramsCtrl.text = grams.toStringAsFixed(0);
+    manualFinalCalories = false;
+    syncFinalCalories();
+  }
 
   void syncFinalCalories() {
     if (manualFinalCalories) return;
-    finalCalCtrl.text = AnalysisService.calculateMealCalories(
+    finalCalCtrl.text = AnalysisService.calculateMealCaloriesByGrams(
       rawCalories,
-      portion,
+      grams,
     ).toStringAsFixed(1);
   }
 
@@ -557,6 +687,7 @@ class _FoodDraft {
     rawNameCtrl.dispose();
     confirmedNameCtrl.dispose();
     rawCalCtrl.dispose();
+    gramsCtrl.dispose();
     finalCalCtrl.dispose();
   }
 }

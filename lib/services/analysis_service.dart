@@ -65,6 +65,28 @@ class AnalysisService {
     return double.parse(result.toStringAsFixed(1));
   }
 
+  static double calculateMealCaloriesByGrams(
+    num? caloriesPer100g,
+    num? grams,
+  ) {
+    final calories = (caloriesPer100g ?? 0).toDouble();
+    final weight = (grams ?? 0).toDouble();
+    if (calories <= 0 || weight <= 0) return 0;
+    return double.parse((calories * weight / 100).toStringAsFixed(1));
+  }
+
+  static double resolveMealItemCalories({
+    num? caloriesPer100g,
+    num? grams,
+    num? caloriesUserOverride,
+  }) {
+    final override = caloriesUserOverride?.toDouble();
+    if (override != null && override >= 0) {
+      return double.parse(override.toStringAsFixed(1));
+    }
+    return calculateMealCaloriesByGrams(caloriesPer100g, grams);
+  }
+
   static int calculateExerciseCalories(
     num met,
     num weight,
@@ -82,31 +104,193 @@ class AnalysisService {
 
   static List<FoodSignal> buildFoodSignals(
     List<Map<String, dynamic>> mealItems,
-    List<Map<String, dynamic>> glucoseRecords,
-  ) {
+    List<Map<String, dynamic>> glucoseRecords, [
+    List<Map<String, dynamic>> statusRecords = const [],
+  ]) {
     if (mealItems.isEmpty) {
       return const [
-        FoodSignal(name: '全麦早餐', level: 'green', reason: '更适合做稳定能量的底子'),
-        FoodSignal(name: '盖饭/炒饭', level: 'red', reason: '容易把餐后血糖拉得比较快'),
-        FoodSignal(name: '鱼虾蔬菜', level: 'green', reason: '蛋白质和蔬菜更容易扛饿'),
+        FoodSignal(
+          name: '继续记录餐食',
+          level: 'yellow',
+          reason: '数据不足，建议记录餐后血糖以激活分析',
+        ),
       ];
     }
 
-    final seen = <String>{};
-    final result = <FoodSignal>[];
-    for (final item in mealItems) {
-      final name = '${item['food_name_confirmed'] ?? item['name'] ?? '这餐'}';
-      if (seen.contains(name)) continue;
-      seen.add(name);
-      final calories =
-          double.tryParse(
-            '${item['calories_final'] ?? item['calories'] ?? 0}',
-          ) ??
-          0;
-      result.add(classifyFood(name, calories));
-      if (result.length == 4) break;
+    final mealObservations = _buildMealObservations(mealItems);
+    if (mealObservations.isEmpty) {
+      return const [
+        FoodSignal(
+          name: '继续记录餐食',
+          level: 'yellow',
+          reason: '数据不足，建议记录餐后血糖以激活分析',
+        ),
+      ];
     }
-    return result;
+
+    _attachGlucoseToMeals(mealObservations, glucoseRecords);
+    _attachStatusToMeals(mealObservations, statusRecords);
+
+    final foodStats = <String, _FoodStats>{};
+    for (final meal in mealObservations) {
+      for (final name in meal.foodNames) {
+        foodStats.putIfAbsent(name, () => _FoodStats(name)).addMeal(meal);
+      }
+    }
+
+    final result = foodStats.values.map(_classifyFoodStats).toList()
+      ..sort((a, b) {
+        final rank = {'red': 0, 'yellow': 1, 'green': 2};
+        final levelCompare = (rank[a.level] ?? 3).compareTo(rank[b.level] ?? 3);
+        if (levelCompare != 0) return levelCompare;
+        return a.name.compareTo(b.name);
+      });
+
+    if (result.isEmpty) {
+      return const [
+        FoodSignal(
+          name: '继续记录餐食',
+          level: 'yellow',
+          reason: '数据不足，建议记录餐后血糖以激活分析',
+        ),
+      ];
+    }
+    return result.take(4).toList();
+  }
+
+  static List<_MealObservation> _buildMealObservations(
+    List<Map<String, dynamic>> mealItems,
+  ) {
+    final byMeal = <String, _MealObservation>{};
+    for (final item in mealItems) {
+      final name =
+          '${item['food_name_confirmed'] ?? item['name'] ?? ''}'.trim();
+      if (name.isEmpty) continue;
+      final mealId = '${item['meal_id'] ?? item['id'] ?? item.hashCode}';
+      final mealTime = _parseDateTime(item['meal_time']);
+      if (mealTime == null) continue;
+
+      byMeal
+          .putIfAbsent(mealId, () => _MealObservation(mealId, mealTime))
+          .foodNames
+          .add(name);
+    }
+    final meals = byMeal.values.toList()
+      ..sort((a, b) => b.mealTime.compareTo(a.mealTime));
+    return meals;
+  }
+
+  static void _attachGlucoseToMeals(
+    List<_MealObservation> meals,
+    List<Map<String, dynamic>> glucoseRecords,
+  ) {
+    for (final record in glucoseRecords) {
+      final recordTime = _parseDateTime(record['record_time']);
+      final value = double.tryParse('${record['value']}');
+      if (recordTime == null || value == null) continue;
+
+      final meal = _nearestMealInWindow(
+        meals,
+        recordTime,
+        minMinutes: 30,
+        maxMinutes: 180,
+      );
+      if (meal == null) continue;
+      meal.glucoseCount += 1;
+      if (value < 3.9) {
+        meal.lowGlucoseCount += 1;
+      } else if (value > 10.0) {
+        meal.highGlucoseCount += 1;
+      } else {
+        meal.stableGlucoseCount += 1;
+      }
+    }
+  }
+
+  static void _attachStatusToMeals(
+    List<_MealObservation> meals,
+    List<Map<String, dynamic>> statusRecords,
+  ) {
+    final mealsById = {for (final meal in meals) meal.mealId: meal};
+    for (final record in statusRecords) {
+      final directMealId = record['related_meal_id'];
+      var meal = directMealId == null ? null : mealsById['$directMealId'];
+
+      if (meal == null) {
+        final recordTime = _parseDateTime(record['record_time']);
+        if (recordTime == null) continue;
+        meal = _nearestMealInWindow(
+          meals,
+          recordTime,
+          minMinutes: 0,
+          maxMinutes: 240,
+        );
+      }
+      if (meal == null) continue;
+
+      final status = '${record['status_level'] ?? ''}';
+      if (status == '极度疲劳' || status == '略感疲惫') {
+        meal.badStatusCount += 1;
+      } else if (status == '感觉不错' || status == '精力充沛') {
+        meal.goodStatusCount += 1;
+      }
+    }
+  }
+
+  static _MealObservation? _nearestMealInWindow(
+    List<_MealObservation> meals,
+    DateTime recordTime, {
+    required int minMinutes,
+    required int maxMinutes,
+  }) {
+    _MealObservation? nearest;
+    for (final meal in meals) {
+      final minutes = recordTime.difference(meal.mealTime).inMinutes;
+      if (minutes < minMinutes || minutes > maxMinutes) continue;
+      if (nearest == null || meal.mealTime.isAfter(nearest.mealTime)) {
+        nearest = meal;
+      }
+    }
+    return nearest;
+  }
+
+  static FoodSignal _classifyFoodStats(_FoodStats stats) {
+    if (stats.glucoseCount == 0) {
+      return FoodSignal(
+        name: stats.name,
+        level: 'yellow',
+        reason: '数据不足，建议记录餐后血糖以激活分析',
+      );
+    }
+
+    final unstableCount = stats.highGlucoseCount + stats.lowGlucoseCount;
+    if (unstableCount >= 2 || (unstableCount >= 1 && stats.badStatusCount >= 2)) {
+      return FoodSignal(
+        name: stats.name,
+        level: 'red',
+        reason: '多次关联餐后波动或疲劳，建议减少频率并控制份量',
+      );
+    }
+
+    if (stats.stableGlucoseCount >= 2 &&
+        unstableCount == 0 &&
+        stats.badStatusCount == 0) {
+      return FoodSignal(
+        name: stats.name,
+        level: 'green',
+        reason: '多次记录后血糖更平稳，可以继续保留',
+      );
+    }
+
+    return FoodSignal(
+      name: stats.name,
+      level: 'yellow',
+      reason: '可以吃，但不建议常吃，先控制份量并继续观察',
+    );
+  }
+
+  static DateTime? _parseDateTime(Object? value) {
+    return DateTime.tryParse('$value');
   }
 
   static FoodSignal classifyFood(String name, num calories) {
@@ -202,5 +386,40 @@ class AnalysisService {
       nextStep: nextStep,
       exerciseTip: exerciseTip,
     );
+  }
+}
+
+class _MealObservation {
+  final String mealId;
+  final DateTime mealTime;
+  final Set<String> foodNames = {};
+  int glucoseCount = 0;
+  int highGlucoseCount = 0;
+  int lowGlucoseCount = 0;
+  int stableGlucoseCount = 0;
+  int badStatusCount = 0;
+  int goodStatusCount = 0;
+
+  _MealObservation(this.mealId, this.mealTime);
+}
+
+class _FoodStats {
+  final String name;
+  int glucoseCount = 0;
+  int highGlucoseCount = 0;
+  int lowGlucoseCount = 0;
+  int stableGlucoseCount = 0;
+  int badStatusCount = 0;
+  int goodStatusCount = 0;
+
+  _FoodStats(this.name);
+
+  void addMeal(_MealObservation meal) {
+    glucoseCount += meal.glucoseCount;
+    highGlucoseCount += meal.highGlucoseCount;
+    lowGlucoseCount += meal.lowGlucoseCount;
+    stableGlucoseCount += meal.stableGlucoseCount;
+    badStatusCount += meal.badStatusCount;
+    goodStatusCount += meal.goodStatusCount;
   }
 }

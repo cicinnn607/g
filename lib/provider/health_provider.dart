@@ -45,8 +45,11 @@ class HealthProvider with ChangeNotifier {
   // Backwards-compatible names used by older pages/tests.
   List<Map<String, dynamic>> get dietHistory => _mealHistory;
 
-  List<FoodSignal> get foodSignals =>
-      AnalysisService.buildFoodSignals(_mealItems, _glucoseHistory);
+  List<FoodSignal> get foodSignals => AnalysisService.buildFoodSignals(
+    _mealItems,
+    _glucoseHistory,
+    _statusHistory,
+  );
 
   String get exerciseSuggestion => AnalysisService.buildExerciseSuggestion(
     _glucoseHistory,
@@ -71,15 +74,12 @@ class HealthProvider with ChangeNotifier {
     notifyListeners();
     try {
       final snapshot = await repository.loadSnapshot();
-      final profile = snapshot.profile;
-      displayName = '${profile['display_name'] ?? '稳稳'}';
-      gender = '${profile['gender'] ?? '男'}';
-      height = double.tryParse('${profile['height']}') ?? 170.0;
-      birthDate =
-          '${profile['birth_date'] ?? '${DateTime.now().year - 23}-01-01'}';
-      age = snapshot.age;
-      weight = snapshot.weight;
-      hasBodyMetric = snapshot.hasBodyMetric;
+      _applyProfile(
+        snapshot.profile,
+        ageValue: snapshot.age,
+        weightValue: snapshot.weight,
+        hasMetric: snapshot.hasBodyMetric,
+      );
 
       _glucoseHistory = snapshot.glucoseRecords;
       _mealHistory = snapshot.meals;
@@ -98,6 +98,39 @@ class HealthProvider with ChangeNotifier {
       isLoading = false;
       notifyListeners();
     }
+  }
+
+  Future<void> refreshProfileData() async {
+    final profile = await repository.getProfile();
+    final bodyMetric = await repository.getLatestBodyMetric();
+    final nextWeight = bodyMetric == null
+        ? weight
+        : double.tryParse('${bodyMetric['weight']}') ?? weight;
+    _applyProfile(
+      profile,
+      ageValue: HealthRepository.ageFromBirthDate(
+        '${profile['birth_date'] ?? ''}',
+      ),
+      weightValue: nextWeight,
+      hasMetric: bodyMetric != null,
+    );
+    notifyListeners();
+  }
+
+  void _applyProfile(
+    Map<String, dynamic> profile, {
+    required int ageValue,
+    required double weightValue,
+    required bool hasMetric,
+  }) {
+    displayName = '${profile['display_name'] ?? '稳稳'}';
+    gender = '${profile['gender'] ?? '男'}';
+    height = double.tryParse('${profile['height']}') ?? 170.0;
+    birthDate =
+        '${profile['birth_date'] ?? '${DateTime.now().year - 23}-01-01'}';
+    age = ageValue;
+    weight = weightValue;
+    hasBodyMetric = hasMetric;
   }
 
   void resetForSignedOutUser() {

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../core/app_messages.dart';
 import '../core/app_style.dart';
 import '../provider/health_provider.dart';
 import '../services/analysis_service.dart';
@@ -30,6 +31,7 @@ class _GlucoseRecordPageState extends State<GlucoseRecordPage> {
   String _unit = 'mmol/L';
   String _source = 'manual';
   DateTime _recordTime = DateTime.now();
+  bool _saving = false;
 
   Future<void> _pickDateTime() async {
     final date = await showDatePicker(
@@ -56,19 +58,26 @@ class _GlucoseRecordPageState extends State<GlucoseRecordPage> {
   }
 
   Future<void> _save() async {
+    if (_saving) return;
+    setState(() => _saving = true);
     final provider = context.read<HealthProvider>();
-    await provider.repository.saveGlucose(
-      value: double.parse(_value.toStringAsFixed(1)),
-      recordTime: _recordTime,
-      timePeriod: _period,
-      unit: _unit,
-      source: _source,
-    );
-    await provider.loadDashboardData();
-    if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('血糖已记录')));
+    try {
+      await provider.repository.saveGlucose(
+        value: double.parse(_value.toStringAsFixed(1)),
+        recordTime: _recordTime,
+        timePeriod: _period,
+        unit: _unit,
+        source: _source,
+      );
+      await provider.loadDashboardData();
+      if (!mounted) return;
+      _showSnack('血糖已记录');
+    } catch (error) {
+      if (!mounted) return;
+      _showSnack(friendlyActionError(error, action: '保存血糖'));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   Future<void> _delete(String id) async {
@@ -197,8 +206,8 @@ class _GlucoseRecordPageState extends State<GlucoseRecordPage> {
                         borderRadius: BorderRadius.circular(8),
                       ),
                     ),
-                    onPressed: _save,
-                    child: const Text('保存记录'),
+                    onPressed: _saving ? null : _save,
+                    child: Text(_saving ? '保存中' : '保存记录'),
                   ),
                 ),
               ],
@@ -277,6 +286,12 @@ class _GlucoseRecordPageState extends State<GlucoseRecordPage> {
     if (value < 3.9) return AppColors.yellow;
     if (value > 10.0) return AppColors.red;
     return AppColors.primary;
+  }
+
+  void _showSnack(String text) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(text), backgroundColor: AppColors.primaryDark),
+    );
   }
 
   String _formatDateTime(DateTime value) {

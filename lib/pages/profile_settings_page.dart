@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../core/app_messages.dart';
 import '../core/app_style.dart';
 import '../pages/login_page.dart';
 import '../provider/health_provider.dart';
@@ -14,13 +15,26 @@ class ProfileSettingsPage extends StatefulWidget {
   State<ProfileSettingsPage> createState() => _ProfileSettingsPageState();
 }
 
-class _ProfileSettingsPageState extends State<ProfileSettingsPage> {
+class _ProfileSettingsPageState extends State<ProfileSettingsPage>
+    with WidgetsBindingObserver {
   final _nameCtrl = TextEditingController();
   final _heightCtrl = TextEditingController();
   final _weightCtrl = TextEditingController();
   String _gender = '男';
   DateTime _birthDate = DateTime(DateTime.now().year - 23, 1, 1);
   bool _loaded = false;
+  bool _savingProfile = false;
+  NotificationPermissionStatus _notificationStatus =
+      NotificationPermissionStatus.unknown;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _refreshNotificationStatus();
+    });
+  }
 
   @override
   void didChangeDependencies() {
@@ -47,24 +61,31 @@ class _ProfileSettingsPageState extends State<ProfileSettingsPage> {
   }
 
   Future<void> _saveProfile() async {
+    if (_savingProfile) return;
+    setState(() => _savingProfile = true);
     final provider = context.read<HealthProvider>();
     final repo = provider.repository;
     final height = double.tryParse(_heightCtrl.text) ?? provider.height;
     final weight = double.tryParse(_weightCtrl.text) ?? provider.weight;
-    await repo.saveProfile(
-      displayName: _nameCtrl.text,
-      gender: _gender,
-      height: height,
-      birthDate: _formatDate(_birthDate),
-    );
-    if ((weight - provider.weight).abs() >= 0.1) {
-      await repo.addBodyMetric(weight: weight, recordTime: DateTime.now());
+    try {
+      await repo.saveProfile(
+        displayName: _nameCtrl.text,
+        gender: _gender,
+        height: height,
+        birthDate: _formatDate(_birthDate),
+      );
+      if ((weight - provider.weight).abs() >= 0.1) {
+        await repo.addBodyMetric(weight: weight, recordTime: DateTime.now());
+      }
+      await provider.refreshProfileData();
+      if (!mounted) return;
+      _showSnack('个人信息已保存');
+    } catch (error) {
+      if (!mounted) return;
+      _showSnack(friendlyActionError(error, action: '保存个人信息'));
+    } finally {
+      if (mounted) setState(() => _savingProfile = false);
     }
-    await provider.loadDashboardData();
-    if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('个人信息已保存')));
   }
 
   Future<void> _addReminder() async {
@@ -76,41 +97,62 @@ class _ProfileSettingsPageState extends State<ProfileSettingsPage> {
     if (!mounted) return;
     final provider = context.read<HealthProvider>();
     final label = _labelFor(time);
-    final row = await provider.repository.addReminder(
-      timeOfDay: _formatTime(time),
-      label: label,
-    );
-    await ReminderService.instance.scheduleDailyReminder(
-      id: '${row['id']}',
-      timeOfDay: '${row['time_of_day']}',
-      label: '${row['label']}',
-    );
-    await provider.loadDashboardData();
+    try {
+      final row = await provider.repository.addReminder(
+        timeOfDay: _formatTime(time),
+        label: label,
+      );
+      await ReminderService.instance.scheduleDailyReminder(
+        id: '${row['id']}',
+        timeOfDay: '${row['time_of_day']}',
+        label: '${row['label']}',
+      );
+      await provider.loadDashboardData();
+      await _refreshNotificationStatus();
+      if (!mounted) return;
+      _showSnack('提醒已添加');
+    } catch (error) {
+      if (!mounted) return;
+      _showSnack(friendlyActionError(error, action: '添加提醒'));
+    }
   }
 
   Future<void> _toggleReminder(String id, bool enabled) async {
     final provider = context.read<HealthProvider>();
-    await provider.repository.setReminderEnabled(id, enabled);
-    if (enabled) {
-      final reminder = provider.reminders.firstWhere(
-        (item) => '${item['id']}' == id,
-      );
-      await ReminderService.instance.scheduleDailyReminder(
-        id: id,
-        timeOfDay: '${reminder['time_of_day']}',
-        label: '${reminder['label']}',
-      );
-    } else {
-      await ReminderService.instance.cancelReminder(id);
+    try {
+      await provider.repository.setReminderEnabled(id, enabled);
+      if (enabled) {
+        final reminder = provider.reminders.firstWhere(
+          (item) => '${item['id']}' == id,
+        );
+        await ReminderService.instance.scheduleDailyReminder(
+          id: id,
+          timeOfDay: '${reminder['time_of_day']}',
+          label: '${reminder['label']}',
+        );
+      } else {
+        await ReminderService.instance.cancelReminder(id);
+      }
+      await provider.loadDashboardData();
+      await _refreshNotificationStatus();
+    } catch (error) {
+      if (!mounted) return;
+      _showSnack(friendlyActionError(error, action: '更新提醒'));
     }
-    await provider.loadDashboardData();
   }
 
   Future<void> _deleteReminder(String id) async {
     final provider = context.read<HealthProvider>();
-    await ReminderService.instance.cancelReminder(id);
-    await provider.repository.deleteReminder(id);
-    await provider.loadDashboardData();
+    try {
+      await ReminderService.instance.cancelReminder(id);
+      await provider.repository.deleteReminder(id);
+      await provider.loadDashboardData();
+      if (!mounted) return;
+      _showSnack('提醒已删除');
+    } catch (error) {
+      if (!mounted) return;
+      _showSnack(friendlyActionError(error, action: '删除提醒'));
+    }
   }
 
   Future<void> _signOut() async {
@@ -122,6 +164,26 @@ class _ProfileSettingsPageState extends State<ProfileSettingsPage> {
       MaterialPageRoute(builder: (_) => const LoginPage()),
       (_) => false,
     );
+  }
+
+  Future<void> _refreshNotificationStatus() async {
+    final status = await ReminderService.instance.checkPermissionStatus();
+    if (!mounted) return;
+    setState(() => _notificationStatus = status);
+  }
+
+  Future<void> _requestNotificationPermission() async {
+    final status = await ReminderService.instance.requestPermissions();
+    if (!mounted) return;
+    setState(() => _notificationStatus = status);
+    _showSnack(_notificationSnackText(status));
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _refreshNotificationStatus();
+    }
   }
 
   @override
@@ -193,8 +255,8 @@ class _ProfileSettingsPageState extends State<ProfileSettingsPage> {
                         borderRadius: BorderRadius.circular(8),
                       ),
                     ),
-                    onPressed: _saveProfile,
-                    child: const Text('保存'),
+                    onPressed: _savingProfile ? null : _saveProfile,
+                    child: Text(_savingProfile ? '保存中' : '保存'),
                   ),
                 ),
               ],
@@ -223,10 +285,43 @@ class _ProfileSettingsPageState extends State<ProfileSettingsPage> {
                     onDelete: () => _deleteReminder('${reminder['id']}'),
                   ),
                 const SizedBox(height: 8),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppColors.background,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        _notificationStatus == NotificationPermissionStatus.allowed
+                            ? Icons.notifications_active_outlined
+                            : Icons.notifications_off_outlined,
+                        color: _notificationStatus ==
+                                NotificationPermissionStatus.allowed
+                            ? AppColors.primary
+                            : AppColors.muted,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          '系统通知：${_notificationStatusLabel()}',
+                          style: AppTextStyles.caption,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
                 TextButton.icon(
-                  onPressed: ReminderService.instance.requestPermissions,
+                  onPressed: _requestNotificationPermission,
                   icon: const Icon(Icons.notifications_active_outlined),
-                  label: const Text('重新允许系统提醒'),
+                  label: Text(
+                    _notificationStatus == NotificationPermissionStatus.denied
+                        ? '开启通知权限'
+                        : '检查通知权限',
+                  ),
                 ),
               ],
             ),
@@ -277,8 +372,37 @@ class _ProfileSettingsPageState extends State<ProfileSettingsPage> {
         '${value.day.toString().padLeft(2, '0')}';
   }
 
+  String _notificationStatusLabel() {
+    switch (_notificationStatus) {
+      case NotificationPermissionStatus.allowed:
+        return '已开启';
+      case NotificationPermissionStatus.denied:
+        return '已关闭';
+      case NotificationPermissionStatus.unknown:
+        return '未知';
+    }
+  }
+
+  String _notificationSnackText(NotificationPermissionStatus status) {
+    switch (status) {
+      case NotificationPermissionStatus.allowed:
+        return '系统通知已开启';
+      case NotificationPermissionStatus.denied:
+        return '系统通知未开启，请在系统设置中允许通知';
+      case NotificationPermissionStatus.unknown:
+        return '已检查通知权限，当前平台无法读取精确状态';
+    }
+  }
+
+  void _showSnack(String text) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(text), backgroundColor: AppColors.primaryDark),
+    );
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _nameCtrl.dispose();
     _heightCtrl.dispose();
     _weightCtrl.dispose();
@@ -303,6 +427,7 @@ class _ReminderRow extends StatelessWidget {
         reminder['enabled'] == true ||
         '${reminder['enabled']}' == '1' ||
         '${reminder['enabled']}' == 'true';
+    final timeLabel = _formatReminderTime(context, reminder['time_of_day']);
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 8),
       decoration: const BoxDecoration(
@@ -326,7 +451,7 @@ class _ReminderRow extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '${reminder['time_of_day']}',
+                  timeLabel,
                   style: const TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w800,
@@ -353,5 +478,14 @@ class _ReminderRow extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  String _formatReminderTime(BuildContext context, Object? value) {
+    final parts = '$value'.split(':');
+    if (parts.length < 2) return '$value';
+    final hour = int.tryParse(parts[0]);
+    final minute = int.tryParse(parts[1]);
+    if (hour == null || minute == null) return '$value';
+    return TimeOfDay(hour: hour, minute: minute).format(context);
   }
 }
