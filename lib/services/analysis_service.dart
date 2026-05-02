@@ -60,6 +60,58 @@ class AnalysisService {
     '牛奶',
   ];
 
+  static const Map<String, List<String>> _homeReminderMessages = {
+    'highGlucose': [
+      '最近一次血糖偏高，下一餐先少甜饮、主食留一点余地，饭后慢走 10 分钟。',
+      '这次读数有点高，先别急着加难度：少点甜口，饭后散步一小圈。',
+      '血糖偏高时，最实用的是下一餐稳住份量，再加 10-15 分钟轻走。',
+      '下一餐把饮料换成水，主食慢一点吃，饭后让腿帮身体分担一点工作。',
+      '看到偏高读数，先做小调整：少甜饮、少久坐、饭后轻轻动起来。',
+    ],
+    'lowGlucose': [
+      '最近一次血糖偏低，先关注头晕、发抖、乏力等感受，今天别空腹硬扛。',
+      '读数偏低时，先把身体感受记下来；如果不舒服，及时按你的健康方案处理。',
+      '血糖偏低更要温柔一点：别空腹猛运动，先观察状态再安排活动。',
+      '这次读数偏低，记录一下当时有没有心慌、出汗或犯困，后面更好找规律。',
+      '偏低读数值得留意，今天的目标不是拼强度，是把感受记录清楚。',
+    ],
+    'postMeal': [
+      '如果刚吃完，慢走 10 分钟就很好，餐后血糖通常更喜欢这种小动作。',
+      '饭后先别急着坐太久，下楼走一小圈，给这一餐一个平稳收尾。',
+      '刚吃完可以试试 10-15 分钟轻松走，速度以能正常说话为准。',
+      '饭后散步不用很猛，像给身体点了一个“平稳模式”。',
+      '这一餐结束后，让腿替胰岛素分担一点工作，慢走一会儿就算数。',
+    ],
+    'tiredStatus': [
+      '最近状态有点疲惫，可以回看上一餐、睡眠和久坐时间，备注写细一点会更好分析。',
+      '犯困不一定只怪意志力，下一次记下吃了什么、几点困，规律会慢慢浮出来。',
+      '状态偏累时，先做低成本调整：补水、起身走几分钟，再记录具体感受。',
+      '如果饭后容易困，试着把主食份量、甜饮和活动量一起记下来。',
+      '今天感觉累的话，不用硬撑，先留一条状态备注，数据会替你记住线索。',
+    ],
+    'lowExercise': [
+      '这两天运动记录偏少，可以从饭后散步 10 分钟开始，不需要一下子练很猛。',
+      '今天的小目标：多走一段路，少坐一会儿，血糖管理先从低门槛开始。',
+      '运动不用等整块时间，饭后 8-12 分钟慢走也算一次有效尝试。',
+      '如果没空运动，就把电梯换成楼梯的一小段，先让身体收到“动起来”的信号。',
+      '给今天加一点轻活动吧，强度不用卷，稳定出现更重要。',
+    ],
+    'insufficientData': [
+      '先记录一条血糖或餐食吧，数据多一点，建议就会更像为你定制的。',
+      '今天先留下一条记录，明天分析就更有底气。',
+      '从一餐开始就够了：吃了什么、感觉怎样，都是后面找规律的线索。',
+      '健康管理不用开局满分，先记一条，系统就有东西可以帮你看。',
+      '身体不是 KPI，但它喜欢稳定交付；今天先交付一条记录就行。',
+    ],
+    'stable': [
+      '目前节奏看起来比较稳，继续保留饭后轻活动，重点观察下午精力。',
+      '今天可以继续这个节奏：吃慢一点、饭后动一点、状态记一点。',
+      '稳定不是运气，通常是份量、活动和睡眠一起配合出来的。',
+      '如果最近感觉不错，把有效的那几餐保留下来，它们可能是你的绿灯组合。',
+      '身体不是 KPI，但它真的喜欢稳定交付；继续保持这个节奏。',
+    ],
+  };
+
   static double calculateMealCalories(num caloriesRaw, num portionSize) {
     final result = caloriesRaw * portionSize;
     return double.parse(result.toStringAsFixed(1));
@@ -291,6 +343,116 @@ class AnalysisService {
 
   static DateTime? _parseDateTime(Object? value) {
     return DateTime.tryParse('$value');
+  }
+
+  static String buildHomeReminder({
+    required List<Map<String, dynamic>> glucoseRecords,
+    required List<Map<String, dynamic>> meals,
+    required List<Map<String, dynamic>> exercises,
+    required List<Map<String, dynamic>> statuses,
+    required int totalRecords,
+    DateTime? now,
+  }) {
+    final referenceTime = now ?? DateTime.now();
+    final latestGlucose = _latestRecord(glucoseRecords, 'record_time');
+    final latestGlucoseValue = latestGlucose == null
+        ? null
+        : double.tryParse('${latestGlucose['value']}');
+    final latestMeal = _latestRecord(meals, 'meal_time');
+    final latestMealTime = _parseDateTime(latestMeal?['meal_time']);
+    final latestStatus = _latestRecord(statuses, 'record_time');
+    final latestStatusLevel = '${latestStatus?['status_level'] ?? ''}';
+
+    late final String scenario;
+    if (latestGlucoseValue != null && latestGlucoseValue > 10.0) {
+      scenario = 'highGlucose';
+    } else if (latestGlucoseValue != null && latestGlucoseValue < 3.9) {
+      scenario = 'lowGlucose';
+    } else if (_isRecentMealWithoutExercise(
+      latestMealTime,
+      exercises,
+      referenceTime,
+    )) {
+      scenario = 'postMeal';
+    } else if (_isTiredStatus(latestStatusLevel)) {
+      scenario = 'tiredStatus';
+    } else if (totalRecords <= 1 ||
+        (glucoseRecords.isEmpty && meals.isEmpty && statuses.isEmpty)) {
+      scenario = 'insufficientData';
+    } else if (_recentExerciseMinutes(exercises, referenceTime) < 30) {
+      scenario = 'lowExercise';
+    } else {
+      scenario = 'stable';
+    }
+
+    final messages = _homeReminderMessages[scenario]!;
+    return _pickStableMessage(messages, scenario, totalRecords, referenceTime);
+  }
+
+  static Map<String, dynamic>? _latestRecord(
+    List<Map<String, dynamic>> records,
+    String timeKey,
+  ) {
+    Map<String, dynamic>? latest;
+    DateTime? latestTime;
+    for (final record in records) {
+      final recordTime = _parseDateTime(record[timeKey]);
+      if (recordTime == null) continue;
+      if (latestTime == null || recordTime.isAfter(latestTime)) {
+        latest = record;
+        latestTime = recordTime;
+      }
+    }
+    if (latest != null) return latest;
+    return records.isEmpty ? null : records.first;
+  }
+
+  static bool _isRecentMealWithoutExercise(
+    DateTime? mealTime,
+    List<Map<String, dynamic>> exercises,
+    DateTime now,
+  ) {
+    if (mealTime == null) return false;
+    final minutesAfterMeal = now.difference(mealTime).inMinutes;
+    if (minutesAfterMeal < 0 || minutesAfterMeal > 120) return false;
+    return !exercises.any((exercise) {
+      final exerciseTime = _parseDateTime(exercise['exercise_time']);
+      if (exerciseTime == null) return false;
+      return !exerciseTime.isBefore(mealTime) && !exerciseTime.isAfter(now);
+    });
+  }
+
+  static bool _isTiredStatus(String level) {
+    return level.contains('疲劳') || level.contains('疲惫');
+  }
+
+  static int _recentExerciseMinutes(
+    List<Map<String, dynamic>> exercises,
+    DateTime now,
+  ) {
+    return exercises.fold<int>(0, (sum, item) {
+      final exerciseTime = _parseDateTime(item['exercise_time']);
+      if (exerciseTime == null) return sum;
+      final hoursAgo = now.difference(exerciseTime).inHours;
+      if (hoursAgo < 0 || hoursAgo > 72) return sum;
+      return sum + (int.tryParse('${item['duration']}') ?? 0);
+    });
+  }
+
+  static String _pickStableMessage(
+    List<String> messages,
+    String scenario,
+    int totalRecords,
+    DateTime now,
+  ) {
+    final dayKey = now.year * 10000 + now.month * 100 + now.day;
+    final scenarioSeed = scenario.codeUnits.fold<int>(
+      0,
+      (sum, unit) => sum + unit,
+    );
+    final index = (dayKey + scenarioSeed + totalRecords).abs() %
+        messages.length;
+    return messages[index];
   }
 
   static FoodSignal classifyFood(String name, num calories) {

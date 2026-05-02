@@ -57,6 +57,14 @@ class HealthProvider with ChangeNotifier {
     _exerciseHistory,
   );
 
+  String get homeReminder => AnalysisService.buildHomeReminder(
+    glucoseRecords: _glucoseHistory,
+    meals: _mealHistory,
+    exercises: _exerciseHistory,
+    statuses: _statusHistory,
+    totalRecords: _totalRecords,
+  );
+
   ManualInsight get manualInsight => AnalysisService.buildManualInsight(
     glucoseRecords: _glucoseHistory,
     meals: _mealHistory,

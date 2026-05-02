@@ -189,6 +189,109 @@ void main() {
     expect(signals.single.isRed, isTrue);
   });
 
+  test('首页提醒在无数据时返回记录引导', () {
+    final reminder = AnalysisService.buildHomeReminder(
+      glucoseRecords: const [],
+      meals: const [],
+      exercises: const [],
+      statuses: const [],
+      totalRecords: 0,
+      now: DateTime(2026, 5, 1, 9),
+    );
+
+    expect(reminder, anyOf(contains('记录'), contains('一餐')));
+  });
+
+  test('首页提醒在刚吃完且无运动时提示轻走', () {
+    final reminder = AnalysisService.buildHomeReminder(
+      glucoseRecords: const [],
+      meals: [
+        _meal('meal_1', DateTime(2026, 5, 1, 12)),
+      ],
+      exercises: const [],
+      statuses: const [],
+      totalRecords: 2,
+      now: DateTime(2026, 5, 1, 12, 50),
+    );
+
+    expect(reminder, anyOf(contains('走'), contains('饭后')));
+  });
+
+  test('首页提醒优先处理偏高血糖', () {
+    final reminder = AnalysisService.buildHomeReminder(
+      glucoseRecords: [
+        _glucose(11.2, DateTime(2026, 5, 1, 12, 40)),
+      ],
+      meals: [
+        _meal('meal_1', DateTime(2026, 5, 1, 12)),
+      ],
+      exercises: const [],
+      statuses: const [],
+      totalRecords: 3,
+      now: DateTime(2026, 5, 1, 13),
+    );
+
+    expect(reminder, anyOf(contains('偏高'), contains('甜饮'), contains('主食')));
+  });
+
+  test('首页提醒会处理疲惫状态', () {
+    final reminder = AnalysisService.buildHomeReminder(
+      glucoseRecords: [
+        _glucose(6.3, DateTime(2026, 5, 1, 8)),
+      ],
+      meals: [
+        _meal('meal_1', DateTime(2026, 4, 30, 19)),
+      ],
+      exercises: [
+        _exercise(DateTime(2026, 5, 1, 8, 20), 40),
+      ],
+      statuses: [
+        _status('略感疲惫', DateTime(2026, 5, 1, 9)),
+      ],
+      totalRecords: 5,
+      now: DateTime(2026, 5, 1, 10),
+    );
+
+    expect(reminder, anyOf(contains('疲'), contains('困'), contains('状态')));
+  });
+
+  test('首页提醒同一输入同一天保持稳定', () {
+    final first = AnalysisService.buildHomeReminder(
+      glucoseRecords: [
+        _glucose(6.3, DateTime(2026, 5, 1, 8)),
+      ],
+      meals: [
+        _meal('meal_1', DateTime(2026, 4, 30, 19)),
+      ],
+      exercises: [
+        _exercise(DateTime(2026, 5, 1, 8, 20), 40),
+      ],
+      statuses: [
+        _status('感觉不错', DateTime(2026, 5, 1, 9)),
+      ],
+      totalRecords: 6,
+      now: DateTime(2026, 5, 1, 10),
+    );
+    final second = AnalysisService.buildHomeReminder(
+      glucoseRecords: [
+        _glucose(6.3, DateTime(2026, 5, 1, 8)),
+      ],
+      meals: [
+        _meal('meal_1', DateTime(2026, 4, 30, 19)),
+      ],
+      exercises: [
+        _exercise(DateTime(2026, 5, 1, 8, 20), 40),
+      ],
+      statuses: [
+        _status('感觉不错', DateTime(2026, 5, 1, 9)),
+      ],
+      totalRecords: 6,
+      now: DateTime(2026, 5, 1, 18),
+    );
+
+    expect(second, first);
+  });
+
   test('出生日期能换算成年龄', () {
     final today = DateTime.now();
     final birthday = '${today.year - 24}-01-01';
@@ -309,6 +412,13 @@ Map<String, dynamic> _mealItem(String mealId, String name, DateTime mealTime) {
   };
 }
 
+Map<String, dynamic> _meal(String mealId, DateTime mealTime) {
+  return {
+    'id': mealId,
+    'meal_time': mealTime.toIso8601String(),
+  };
+}
+
 Map<String, dynamic> _glucose(double value, DateTime recordTime) {
   return {
     'value': value,
@@ -320,6 +430,13 @@ Map<String, dynamic> _status(String level, DateTime recordTime) {
   return {
     'status_level': level,
     'record_time': recordTime.toIso8601String(),
+  };
+}
+
+Map<String, dynamic> _exercise(DateTime exerciseTime, int duration) {
+  return {
+    'exercise_time': exerciseTime.toIso8601String(),
+    'duration': duration,
   };
 }
 

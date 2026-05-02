@@ -276,8 +276,10 @@ class _TodayOverview extends StatelessWidget {
                     color: AppColors.primarySoft,
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: const Text(
-                    '先看餐后变化，再微调一口饭或十分钟路。',
+                  child: Text(
+                    provider.homeReminder,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
                     style: AppTextStyles.body,
                   ),
                 ),
