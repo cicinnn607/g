@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../core/app_messages.dart';
@@ -15,11 +16,31 @@ class ExerciseRecordPage extends StatefulWidget {
 }
 
 class _ExerciseRecordPageState extends State<ExerciseRecordPage> {
+  static const _allExerciseGroup = '全部';
+  static const _commonExerciseGroup = '常用';
+  static const _minDuration = 5;
+  static const _maxDuration = 180;
+  static const _exerciseGroups = [
+    _commonExerciseGroup,
+    '走路跑步',
+    '骑行游泳',
+    '球类运动',
+    '力量塑形',
+    '日常活动',
+    _allExerciseGroup,
+  ];
+
+  final TextEditingController _exerciseSearchController =
+      TextEditingController();
+  final TextEditingController _durationController = TextEditingController(
+    text: '15',
+  );
+
   String? _motionId;
-  double _duration = 15;
+  String _exerciseQuery = '';
+  String _exerciseGroup = _commonExerciseGroup;
   DateTime _exerciseTime = DateTime.now();
   bool _saving = false;
-  bool _showAllExercises = false;
 
   Future<void> _pickDateTime() async {
     final date = await showDatePicker(
@@ -49,11 +70,16 @@ class _ExerciseRecordPageState extends State<ExerciseRecordPage> {
     if (_saving) return;
     final motionId = _currentMotionId(provider);
     if (motionId == null) return;
+    final duration = _durationMinutes;
+    if (duration == null) {
+      _showSnack('运动时长请输入 $_minDuration-$_maxDuration 分钟');
+      return;
+    }
     setState(() => _saving = true);
     try {
       await provider.repository.saveExercise(
         motionId: motionId,
-        duration: _duration.round(),
+        duration: duration,
         exerciseTime: _exerciseTime,
       );
       await provider.loadDashboardData();
@@ -86,10 +112,11 @@ class _ExerciseRecordPageState extends State<ExerciseRecordPage> {
     final met = selected == null
         ? 0.0
         : double.tryParse('${selected['met_value']}') ?? 0.0;
+    final duration = _durationMinutes ?? 0;
     final calories = AnalysisService.calculateExerciseCalories(
       met,
       provider.weight,
-      _duration.round(),
+      duration,
     );
     final visibleCatalog = _visibleExerciseCatalog(provider, selectedId);
 
@@ -103,39 +130,116 @@ class _ExerciseRecordPageState extends State<ExerciseRecordPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: visibleCatalog
-                      .map(
-                        (item) => ChoiceChip(
-                          label: Text('${item['name']}'),
-                          selected: selectedId == '${item['id']}',
-                          selectedColor: AppColors.primarySoft,
-                          onSelected: (_) =>
-                              setState(() => _motionId = '${item['id']}'),
-                        ),
-                      )
-                      .toList(),
-                ),
-                if (provider.exerciseCatalog.length > 8) ...[
-                  const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: TextButton.icon(
-                      style: AppButtonStyles.quiet,
-                      onPressed: () => setState(
-                        () => _showAllExercises = !_showAllExercises,
-                      ),
-                      icon: Icon(
-                        _showAllExercises
-                            ? Icons.keyboard_arrow_up
-                            : Icons.keyboard_arrow_down,
-                      ),
-                      label: Text(_showAllExercises ? '收起运动' : '显示全部运动'),
+                TextField(
+                  controller: _exerciseSearchController,
+                  textInputAction: TextInputAction.search,
+                  decoration: InputDecoration(
+                    hintText: '搜索运动',
+                    prefixIcon: const Icon(Icons.search),
+                    suffixIcon: _exerciseQuery.isEmpty
+                        ? null
+                        : IconButton(
+                            tooltip: '清除搜索',
+                            icon: const Icon(Icons.close),
+                            onPressed: () {
+                              _exerciseSearchController.clear();
+                              setState(() => _exerciseQuery = '');
+                            },
+                          ),
+                    filled: true,
+                    fillColor: AppColors.background,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 12,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(color: AppColors.line),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(color: AppColors.line),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(color: AppColors.primary),
                     ),
                   ),
-                ],
+                  onChanged: (value) {
+                    setState(() => _exerciseQuery = value.trim());
+                  },
+                ),
+                const SizedBox(height: 12),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: _exerciseGroups.map((group) {
+                      final selectedGroup = _exerciseGroup == group;
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: ChoiceChip(
+                          label: Text(group),
+                          labelStyle: AppTextStyles.chip.copyWith(
+                            color: selectedGroup
+                                ? AppColors.primaryDark
+                                : AppColors.muted,
+                          ),
+                          selected: selectedGroup,
+                          selectedColor: AppColors.primarySoft,
+                          backgroundColor: AppColors.background,
+                          side: const BorderSide(color: AppColors.line),
+                          onSelected: (_) {
+                            setState(() => _exerciseGroup = group);
+                          },
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                if (visibleCatalog.isEmpty)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 18,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.background,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AppColors.line),
+                    ),
+                    child: const Center(
+                      child: Text('没有找到匹配的运动', style: AppTextStyles.caption),
+                    ),
+                  )
+                else
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: visibleCatalog
+                        .map(
+                          (item) => ChoiceChip(
+                            label: Text('${item['name']}'),
+                            labelStyle: AppTextStyles.chip.copyWith(
+                              color: selectedId == '${item['id']}'
+                                  ? AppColors.primaryDark
+                                  : AppColors.text,
+                            ),
+                            selected: selectedId == '${item['id']}',
+                            selectedColor: AppColors.primarySoft,
+                            backgroundColor: AppColors.surface,
+                            side: BorderSide(
+                              color: selectedId == '${item['id']}'
+                                  ? AppColors.primary
+                                  : AppColors.line,
+                            ),
+                            onSelected: (_) =>
+                                setState(() => _motionId = '${item['id']}'),
+                          ),
+                        )
+                        .toList(),
+                  ),
                 const SizedBox(height: 16),
                 Container(
                   width: double.infinity,
@@ -201,27 +305,37 @@ class _ExerciseRecordPageState extends State<ExerciseRecordPage> {
                   ),
                 ],
                 const SizedBox(height: 16),
-                Row(
-                  children: [
-                    const Expanded(
-                      child: Text('时长', style: AppTextStyles.section),
+                const Text('时长', style: AppTextStyles.section),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _durationController,
+                  keyboardType: TextInputType.number,
+                  textInputAction: TextInputAction.done,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  decoration: InputDecoration(
+                    hintText: '输入运动时长',
+                    helperText: '$_minDuration-$_maxDuration 分钟',
+                    suffixText: '分钟',
+                    filled: true,
+                    fillColor: AppColors.background,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 12,
                     ),
-                    Text(
-                      '${_duration.round()} 分钟',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w900,
-                        color: AppColors.primaryDark,
-                      ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(color: AppColors.line),
                     ),
-                  ],
-                ),
-                Slider(
-                  value: _duration,
-                  min: 5,
-                  max: 180,
-                  divisions: 35,
-                  activeColor: AppColors.primary,
-                  onChanged: (value) => setState(() => _duration = value),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(color: AppColors.line),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(color: AppColors.primary),
+                    ),
+                  ),
+                  onChanged: (_) => setState(() {}),
                 ),
                 OutlinedButton.icon(
                   style: OutlinedButton.styleFrom(
@@ -248,7 +362,10 @@ class _ExerciseRecordPageState extends State<ExerciseRecordPage> {
                         borderRadius: BorderRadius.circular(8),
                       ),
                     ),
-                    onPressed: selectedId == null || _saving
+                    onPressed:
+                        selectedId == null ||
+                            _durationMinutes == null ||
+                            _saving
                         ? null
                         : () => _save(provider),
                     child: Text(_saving ? '保存中' : '保存运动'),
@@ -297,15 +414,17 @@ class _ExerciseRecordPageState extends State<ExerciseRecordPage> {
                           ),
                           title: Text(
                             '${record['motion_name'] ?? '运动'} · ${record['duration']} 分钟',
-                            style: const TextStyle(fontWeight: FontWeight.w800),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: AppTextStyles.listTitle,
                           ),
                           subtitle: Text(
                             AppFormat.compactDateTime(record['exercise_time']),
+                            style: AppTextStyles.listSubtitle,
                           ),
                           trailing: Text(
                             '-${(double.tryParse('${record['calories_burned']}') ?? 0).toStringAsFixed(0)} kcal',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w900,
+                            style: AppTextStyles.listMeta.copyWith(
                               color: AppColors.green,
                             ),
                           ),
@@ -332,12 +451,27 @@ class _ExerciseRecordPageState extends State<ExerciseRecordPage> {
     String? selectedId,
   ) {
     final all = provider.exerciseCatalog;
-    if (_showAllExercises || all.length <= 8) return all;
+    final query = _exerciseQuery.toLowerCase();
+    final filtered = all.where((item) {
+      final name = '${item['name']}';
+      final description = '${item['description'] ?? ''}';
+      final category = '${item['category'] ?? ''}';
+      final matchesQuery =
+          query.isEmpty ||
+          name.toLowerCase().contains(query) ||
+          description.toLowerCase().contains(query) ||
+          category.toLowerCase().contains(query);
+      final matchesGroup =
+          _exerciseGroup == _allExerciseGroup ||
+          _exerciseItemGroup(item) == _exerciseGroup ||
+          (_exerciseGroup == _commonExerciseGroup &&
+              _isCommonExerciseItem(item));
+      return matchesQuery && matchesGroup;
+    }).toList();
 
-    final visible = <Map<String, dynamic>>[];
+    final visible = [...filtered];
     final seen = <String>{};
-    for (final item in all.take(8)) {
-      visible.add(item);
+    for (final item in visible) {
       seen.add('${item['id']}');
     }
     if (selectedId != null && !seen.contains(selectedId)) {
@@ -349,6 +483,43 @@ class _ExerciseRecordPageState extends State<ExerciseRecordPage> {
       }
     }
     return visible;
+  }
+
+  int? get _durationMinutes {
+    final duration = int.tryParse(_durationController.text.trim());
+    if (duration == null ||
+        duration < _minDuration ||
+        duration > _maxDuration) {
+      return null;
+    }
+    return duration;
+  }
+
+  bool _isCommonExerciseItem(Map<String, dynamic> item) {
+    final name = '${item['name']}';
+    const commonKeywords = ['步行', '快走', '慢跑', '瑜伽', '普拉提', '骑行', '力量训练', '家务'];
+    return commonKeywords.any(name.contains);
+  }
+
+  String _exerciseItemGroup(Map<String, dynamic> item) {
+    final name = '${item['name']}';
+    if (_containsAny(name, const ['步行', '走', '跑', '冲刺', '楼梯'])) {
+      return '走路跑步';
+    }
+    if (_containsAny(name, const ['骑行', '单车', '游泳', '划船机'])) {
+      return '骑行游泳';
+    }
+    if (_containsAny(name, const ['羽毛球', '乒乓球', '网球', '篮球', '足球'])) {
+      return '球类运动';
+    }
+    if (_containsAny(name, const ['瑜伽', '普拉提', '力量', 'HIIT', '波比', '跳绳'])) {
+      return '力量塑形';
+    }
+    return '日常活动';
+  }
+
+  bool _containsAny(String value, List<String> keywords) {
+    return keywords.any(value.contains);
   }
 
   void _showSnack(String text) {
@@ -363,5 +534,12 @@ class _ExerciseRecordPageState extends State<ExerciseRecordPage> {
         '${value.day.toString().padLeft(2, '0')} '
         '${value.hour.toString().padLeft(2, '0')}:'
         '${value.minute.toString().padLeft(2, '0')}';
+  }
+
+  @override
+  void dispose() {
+    _exerciseSearchController.dispose();
+    _durationController.dispose();
+    super.dispose();
   }
 }

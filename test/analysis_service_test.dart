@@ -33,10 +33,7 @@ void main() {
       200.0,
     );
     expect(
-      AnalysisService.resolveMealItemCalories(
-        caloriesPer100g: 116,
-        grams: 150,
-      ),
+      AnalysisService.resolveMealItemCalories(caloriesPer100g: 116, grams: 150),
       174.0,
     );
   });
@@ -82,10 +79,7 @@ void main() {
   test('meal_items 升级 migration 保留旧最终热量并重建公式', () {
     final migration = _readMealUpgradeMigration();
 
-    expect(
-      migration,
-      contains('set calories_user_override = calories_final'),
-    );
+    expect(migration, contains('set calories_user_override = calories_final'));
     expect(
       migration,
       contains('coalesce(calories_raw, 0) * coalesce(grams, 0) / 100'),
@@ -119,10 +113,9 @@ void main() {
   });
 
   test('无配对血糖时食物先标记为黄灯', () {
-    final signals = AnalysisService.buildFoodSignals(
-      [_mealItem('meal_1', '米饭', DateTime(2026, 4, 30, 12))],
-      const [],
-    );
+    final signals = AnalysisService.buildFoodSignals([
+      _mealItem('meal_1', '米饭', DateTime(2026, 4, 30, 12)),
+    ], const []);
 
     expect(signals.single.isYellow, isTrue);
     expect(signals.single.reason, contains('数据不足'));
@@ -196,18 +189,18 @@ void main() {
     expect(signals.where((signal) => signal.isGreen), hasLength(2));
     expect(signals.where((signal) => signal.isYellow), hasLength(1));
     expect(signals.where((signal) => signal.isRed), hasLength(1));
-    expect(signals.map((signal) => signal.reason).join(), isNot(contains('数据不足')));
+    expect(
+      signals.map((signal) => signal.reason).join(),
+      isNot(contains('数据不足')),
+    );
   });
 
   test('首页红绿灯少量餐食时混合用户食物和通用补位', () {
-    final signals = AnalysisService.buildHomeFoodSignals(
-      [
-        _mealItem('meal_1', '苹果', DateTime(2026, 4, 30, 12)),
-        _mealItem('meal_2', '鸡蛋', DateTime(2026, 5, 1, 8)),
-        _mealItem('meal_3', '面条', DateTime(2026, 5, 1, 12)),
-      ],
-      const [],
-    );
+    final signals = AnalysisService.buildHomeFoodSignals([
+      _mealItem('meal_1', '苹果', DateTime(2026, 4, 30, 12)),
+      _mealItem('meal_2', '鸡蛋', DateTime(2026, 5, 1, 8)),
+      _mealItem('meal_3', '面条', DateTime(2026, 5, 1, 12)),
+    ], const []);
 
     expect(signals.length, 4);
     expect(
@@ -215,15 +208,17 @@ void main() {
       isTrue,
     );
     expect(signals.any((signal) => signal.name == '燕麦牛奶'), isTrue);
-    expect(signals.map((signal) => signal.reason).join(), isNot(contains('数据不足')));
+    expect(
+      signals.map((signal) => signal.reason).join(),
+      isNot(contains('数据不足')),
+    );
     expect(signals.any((signal) => signal.reason.contains('已经记录过它')), isFalse);
   });
 
   test('首页红绿灯水果类会给自然建议', () {
-    final signals = AnalysisService.buildHomeFoodSignals(
-      [_mealItem('meal_1', '苹果', DateTime(2026, 4, 30, 12))],
-      const [],
-    );
+    final signals = AnalysisService.buildHomeFoodSignals([
+      _mealItem('meal_1', '苹果', DateTime(2026, 4, 30, 12)),
+    ], const []);
 
     expect(signals.first.name, '苹果');
     expect(signals.first.reason, contains('别单吃'));
@@ -269,20 +264,20 @@ void main() {
     );
 
     expect(
-      signals.any((signal) => signal.reason.contains('多样') || signal.reason.contains('均衡')),
+      signals.any(
+        (signal) =>
+            signal.reason.contains('多样') || signal.reason.contains('均衡'),
+      ),
       isTrue,
     );
   });
 
   test('首页红绿灯补位建议不会重复展示同名食物', () {
-    final signals = AnalysisService.buildHomeFoodSignals(
-      [
-        _mealItem('meal_1', '燕麦牛奶', DateTime(2026, 4, 30, 8)),
-        _mealItem('meal_2', '白米饭', DateTime(2026, 4, 30, 12)),
-        _mealItem('meal_3', '奶茶甜点', DateTime(2026, 4, 30, 15)),
-      ],
-      const [],
-    );
+    final signals = AnalysisService.buildHomeFoodSignals([
+      _mealItem('meal_1', '燕麦牛奶', DateTime(2026, 4, 30, 8)),
+      _mealItem('meal_2', '白米饭', DateTime(2026, 4, 30, 12)),
+      _mealItem('meal_3', '奶茶甜点', DateTime(2026, 4, 30, 15)),
+    ], const []);
 
     final uniqueNames = signals.map((signal) => signal.name).toSet();
     expect(uniqueNames.length, signals.length);
@@ -304,9 +299,7 @@ void main() {
   test('首页提醒在刚吃完且无运动时提示轻走', () {
     final reminder = AnalysisService.buildHomeReminder(
       glucoseRecords: const [],
-      meals: [
-        _meal('meal_1', DateTime(2026, 5, 1, 12)),
-      ],
+      meals: [_meal('meal_1', DateTime(2026, 5, 1, 12))],
       exercises: const [],
       statuses: const [],
       totalRecords: 2,
@@ -318,12 +311,8 @@ void main() {
 
   test('首页提醒优先处理偏高血糖', () {
     final reminder = AnalysisService.buildHomeReminder(
-      glucoseRecords: [
-        _glucose(11.2, DateTime(2026, 5, 1, 12, 40)),
-      ],
-      meals: [
-        _meal('meal_1', DateTime(2026, 5, 1, 12)),
-      ],
+      glucoseRecords: [_glucose(11.2, DateTime(2026, 5, 1, 12, 40))],
+      meals: [_meal('meal_1', DateTime(2026, 5, 1, 12))],
       exercises: const [],
       statuses: const [],
       totalRecords: 3,
@@ -335,18 +324,10 @@ void main() {
 
   test('首页提醒会处理疲惫状态', () {
     final reminder = AnalysisService.buildHomeReminder(
-      glucoseRecords: [
-        _glucose(6.3, DateTime(2026, 5, 1, 8)),
-      ],
-      meals: [
-        _meal('meal_1', DateTime(2026, 4, 30, 19)),
-      ],
-      exercises: [
-        _exercise(DateTime(2026, 5, 1, 8, 20), 40),
-      ],
-      statuses: [
-        _status('略感疲惫', DateTime(2026, 5, 1, 9)),
-      ],
+      glucoseRecords: [_glucose(6.3, DateTime(2026, 5, 1, 8))],
+      meals: [_meal('meal_1', DateTime(2026, 4, 30, 19))],
+      exercises: [_exercise(DateTime(2026, 5, 1, 8, 20), 40)],
+      statuses: [_status('略感疲惫', DateTime(2026, 5, 1, 9))],
       totalRecords: 5,
       now: DateTime(2026, 5, 1, 10),
     );
@@ -356,34 +337,18 @@ void main() {
 
   test('首页提醒同一输入同一天保持稳定', () {
     final first = AnalysisService.buildHomeReminder(
-      glucoseRecords: [
-        _glucose(6.3, DateTime(2026, 5, 1, 8)),
-      ],
-      meals: [
-        _meal('meal_1', DateTime(2026, 4, 30, 19)),
-      ],
-      exercises: [
-        _exercise(DateTime(2026, 5, 1, 8, 20), 40),
-      ],
-      statuses: [
-        _status('感觉不错', DateTime(2026, 5, 1, 9)),
-      ],
+      glucoseRecords: [_glucose(6.3, DateTime(2026, 5, 1, 8))],
+      meals: [_meal('meal_1', DateTime(2026, 4, 30, 19))],
+      exercises: [_exercise(DateTime(2026, 5, 1, 8, 20), 40)],
+      statuses: [_status('感觉不错', DateTime(2026, 5, 1, 9))],
       totalRecords: 6,
       now: DateTime(2026, 5, 1, 10),
     );
     final second = AnalysisService.buildHomeReminder(
-      glucoseRecords: [
-        _glucose(6.3, DateTime(2026, 5, 1, 8)),
-      ],
-      meals: [
-        _meal('meal_1', DateTime(2026, 4, 30, 19)),
-      ],
-      exercises: [
-        _exercise(DateTime(2026, 5, 1, 8, 20), 40),
-      ],
-      statuses: [
-        _status('感觉不错', DateTime(2026, 5, 1, 9)),
-      ],
+      glucoseRecords: [_glucose(6.3, DateTime(2026, 5, 1, 8))],
+      meals: [_meal('meal_1', DateTime(2026, 4, 30, 19))],
+      exercises: [_exercise(DateTime(2026, 5, 1, 8, 20), 40)],
+      statuses: [_status('感觉不错', DateTime(2026, 5, 1, 9))],
       totalRecords: 6,
       now: DateTime(2026, 5, 1, 18),
     );
@@ -394,7 +359,10 @@ void main() {
   test('出生日期能换算成年龄', () {
     final today = DateTime.now();
     final birthday = '${today.year - 24}-01-01';
-    expect(HealthRepository.ageFromBirthDate(birthday), greaterThanOrEqualTo(23));
+    expect(
+      HealthRepository.ageFromBirthDate(birthday),
+      greaterThanOrEqualTo(23),
+    );
   });
 
   test('PGRST205 被识别为提醒表 schema 缺失', () {
@@ -405,15 +373,20 @@ void main() {
     );
 
     expect(isMissingSchemaError(error, table: 'reminder_settings'), isTrue);
-    expect(friendlyActionError(error, action: '添加提醒'), contains('reminder_settings'));
+    expect(
+      friendlyActionError(error, action: '添加提醒'),
+      contains('reminder_settings'),
+    );
   });
 
   test('网络异常不会被当作提醒表缺失', () async {
     final repository = _NetworkReminderRepository();
 
     expect(
-      isMissingSchemaError(Exception('SocketException: failed host lookup'),
-          table: 'reminder_settings'),
+      isMissingSchemaError(
+        Exception('SocketException: failed host lookup'),
+        table: 'reminder_settings',
+      ),
       isFalse,
     );
     await expectLater(repository.getRemindersIfAvailable(), throwsException);
@@ -512,24 +485,15 @@ Map<String, dynamic> _mealItem(String mealId, String name, DateTime mealTime) {
 }
 
 Map<String, dynamic> _meal(String mealId, DateTime mealTime) {
-  return {
-    'id': mealId,
-    'meal_time': mealTime.toIso8601String(),
-  };
+  return {'id': mealId, 'meal_time': mealTime.toIso8601String()};
 }
 
 Map<String, dynamic> _glucose(double value, DateTime recordTime) {
-  return {
-    'value': value,
-    'record_time': recordTime.toIso8601String(),
-  };
+  return {'value': value, 'record_time': recordTime.toIso8601String()};
 }
 
 Map<String, dynamic> _status(String level, DateTime recordTime) {
-  return {
-    'status_level': level,
-    'record_time': recordTime.toIso8601String(),
-  };
+  return {'status_level': level, 'record_time': recordTime.toIso8601String()};
 }
 
 Map<String, dynamic> _exercise(DateTime exerciseTime, int duration) {

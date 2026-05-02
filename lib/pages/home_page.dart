@@ -38,8 +38,6 @@ class HomePage extends StatelessWidget {
               const SizedBox(height: 16),
               _FoodSignals(signals: provider.homeFoodSignals),
               const SizedBox(height: 16),
-              _ExerciseSuggestion(text: provider.exerciseSuggestion),
-              const SizedBox(height: 16),
               _GlucoseChart(records: provider.glucoseHistory),
               const SizedBox(height: 16),
               _RecentRecords(provider: provider),
@@ -351,42 +349,6 @@ class _FoodSignals extends StatelessWidget {
     if (signal.isRed) return AppColors.red;
     if (signal.isYellow) return AppColors.yellow;
     return AppColors.green;
-  }
-}
-
-class _ExerciseSuggestion extends StatelessWidget {
-  final String text;
-
-  const _ExerciseSuggestion({required this.text});
-
-  @override
-  Widget build(BuildContext context) {
-    return SoftCard(
-      child: Row(
-        children: [
-          Container(
-            width: 46,
-            height: 46,
-            decoration: BoxDecoration(
-              color: AppColors.primary.withValues(alpha: 0.12),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(Icons.directions_walk, color: AppColors.primary),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('饭后轻运动', style: AppTextStyles.section),
-                const SizedBox(height: 4),
-                Text(text, style: AppTextStyles.body),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
   }
 }
 

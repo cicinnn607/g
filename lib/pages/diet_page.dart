@@ -267,26 +267,28 @@ class _DietRecordPageState extends State<DietRecordPage> {
           ),
           const SizedBox(height: 14),
           for (var i = 0; i < _drafts.length; i++) ...[
-            Builder(builder: (context) {
-              final index = i;
-              return _FoodDraftCard(
-                index: index,
-                draft: _drafts[index],
-                canRemove: _drafts.length > 1,
-                onChanged: () => setState(() {}),
-                onSearchCatalog: (query) {
-                  return context
-                      .read<HealthProvider>()
-                      .repository
-                      .searchFoodCalorieCatalog(query);
-                },
-                onRemove: () {
-                  final removed = _drafts.removeAt(index);
-                  removed.dispose();
-                  setState(() {});
-                },
-              );
-            }),
+            Builder(
+              builder: (context) {
+                final index = i;
+                return _FoodDraftCard(
+                  index: index,
+                  draft: _drafts[index],
+                  canRemove: _drafts.length > 1,
+                  onChanged: () => setState(() {}),
+                  onSearchCatalog: (query) {
+                    return context
+                        .read<HealthProvider>()
+                        .repository
+                        .searchFoodCalorieCatalog(query);
+                  },
+                  onRemove: () {
+                    final removed = _drafts.removeAt(index);
+                    removed.dispose();
+                    setState(() {});
+                  },
+                );
+              },
+            ),
             const SizedBox(height: 14),
           ],
           SizedBox(
@@ -348,17 +350,15 @@ class _DietRecordPageState extends State<DietRecordPage> {
                             '${meal['serving_summary'] ?? meal['food_names'] ?? '这一餐'}',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontWeight: FontWeight.w800),
+                            style: AppTextStyles.listTitle,
                           ),
                           subtitle: Text(
                             '${meal['meal_type']} · ${AppFormat.compactDateTime(meal['meal_time'])}',
+                            style: AppTextStyles.listSubtitle,
                           ),
                           trailing: Text(
                             '${(double.tryParse('${meal['calories_final']}') ?? 0).toStringAsFixed(0)} kcal',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w900,
-                              color: AppColors.primaryDark,
-                            ),
+                            style: AppTextStyles.listMeta,
                           ),
                         ),
                       );
@@ -401,7 +401,7 @@ class _FoodDraftCard extends StatefulWidget {
   final VoidCallback onChanged;
   final VoidCallback onRemove;
   final Future<List<FoodCalorieCatalogItem>> Function(String query)
-      onSearchCatalog;
+  onSearchCatalog;
 
   const _FoodDraftCard({
     required this.index,
@@ -598,16 +598,16 @@ class _FoodDraft {
     required this.servingOptions,
     required this.catalogMatches,
     required this.imageUrl,
-  })  : rawNameCtrl = TextEditingController(text: rawName),
-        confirmedNameCtrl = TextEditingController(text: confirmedName),
-        rawCalCtrl = TextEditingController(text: rawCalories.toStringAsFixed(0)),
-        gramsCtrl = TextEditingController(text: grams.toStringAsFixed(0)),
-        finalCalCtrl = TextEditingController(
-          text: AnalysisService.calculateMealCaloriesByGrams(
-            rawCalories,
-            grams,
-          ).toStringAsFixed(1),
-        );
+  }) : rawNameCtrl = TextEditingController(text: rawName),
+       confirmedNameCtrl = TextEditingController(text: confirmedName),
+       rawCalCtrl = TextEditingController(text: rawCalories.toStringAsFixed(0)),
+       gramsCtrl = TextEditingController(text: grams.toStringAsFixed(0)),
+       finalCalCtrl = TextEditingController(
+         text: AnalysisService.calculateMealCaloriesByGrams(
+           rawCalories,
+           grams,
+         ).toStringAsFixed(1),
+       );
 
   factory _FoodDraft.empty({String? imageUrl}) {
     return _FoodDraft(

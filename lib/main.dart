@@ -16,8 +16,7 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SupabaseConfig.initialize();
   await ReminderService.instance.initialize();
-  final isLoggedIn =
-      SupabaseConfig.tryClient()?.auth.currentSession != null;
+  final isLoggedIn = SupabaseConfig.tryClient()?.auth.currentSession != null;
 
   runApp(
     MultiProvider(
@@ -108,18 +107,19 @@ class MainTabScreen extends StatefulWidget {
 class _MainTabScreenState extends State<MainTabScreen> {
   int _currentIndex = 0;
 
-  final List<Widget> _pages = const [
-    HomePage(),
-    GlucoseRecordPage(),
-    DietRecordPage(),
-    ExerciseRecordPage(),
-    DataAnalysisPage(),
-  ];
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: IndexedStack(index: _currentIndex, children: _pages),
+      body: IndexedStack(
+        index: _currentIndex,
+        children: const [
+          HomePage(),
+          GlucoseRecordPage(),
+          DietRecordPage(),
+          ExerciseRecordPage(),
+          DataAnalysisPage(),
+        ],
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
         onDestinationSelected: (index) => setState(() => _currentIndex = index),

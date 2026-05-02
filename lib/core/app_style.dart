@@ -22,20 +22,20 @@ class AppColors {
 
 class AppShadows {
   static List<BoxShadow> get soft => [
-        BoxShadow(
-          color: Colors.black.withValues(alpha: 0.045),
-          blurRadius: 18,
-          offset: const Offset(0, 8),
-        ),
-      ];
+    BoxShadow(
+      color: Colors.black.withValues(alpha: 0.045),
+      blurRadius: 18,
+      offset: const Offset(0, 8),
+    ),
+  ];
 
   static List<BoxShadow> get floating => [
-        BoxShadow(
-          color: Colors.black.withValues(alpha: 0.075),
-          blurRadius: 26,
-          offset: const Offset(0, 12),
-        ),
-      ];
+    BoxShadow(
+      color: Colors.black.withValues(alpha: 0.075),
+      blurRadius: 26,
+      offset: const Offset(0, 12),
+    ),
+  ];
 }
 
 class AppTextStyles {
@@ -83,6 +83,38 @@ class AppTextStyles {
     color: AppColors.muted,
   );
 
+  static const listTitle = TextStyle(
+    fontSize: 14,
+    height: 1.25,
+    fontWeight: FontWeight.w600,
+    letterSpacing: 0,
+    color: AppColors.text,
+  );
+
+  static const listSubtitle = TextStyle(
+    fontSize: 12,
+    height: 1.25,
+    fontWeight: FontWeight.w400,
+    letterSpacing: 0,
+    color: AppColors.muted,
+  );
+
+  static const listMeta = TextStyle(
+    fontSize: 13,
+    height: 1.2,
+    fontWeight: FontWeight.w600,
+    letterSpacing: 0,
+    color: AppColors.primaryDark,
+  );
+
+  static const chip = TextStyle(
+    fontSize: 13,
+    height: 1.1,
+    fontWeight: FontWeight.w600,
+    letterSpacing: 0,
+    color: AppColors.text,
+  );
+
   static const caption = TextStyle(
     fontSize: 12,
     height: 1.35,
@@ -101,27 +133,27 @@ class AppTextStyles {
 
 class AppButtonStyles {
   static ButtonStyle get primary => ElevatedButton.styleFrom(
-        backgroundColor: AppColors.primary,
-        foregroundColor: Colors.white,
-        disabledBackgroundColor: AppColors.faint.withValues(alpha: 0.35),
-        disabledForegroundColor: Colors.white,
-        elevation: 0,
-        textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      );
+    backgroundColor: AppColors.primary,
+    foregroundColor: Colors.white,
+    disabledBackgroundColor: AppColors.faint.withValues(alpha: 0.35),
+    disabledForegroundColor: Colors.white,
+    elevation: 0,
+    textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+  );
 
   static ButtonStyle get outline => OutlinedButton.styleFrom(
-        foregroundColor: AppColors.primaryDark,
-        side: const BorderSide(color: AppColors.line),
-        textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      );
+    foregroundColor: AppColors.primaryDark,
+    side: const BorderSide(color: AppColors.line),
+    textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+  );
 
   static ButtonStyle get quiet => TextButton.styleFrom(
-        foregroundColor: AppColors.primaryDark,
-        textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      );
+    foregroundColor: AppColors.primaryDark,
+    textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+  );
 }
 
 class AppFormat {
