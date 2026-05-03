@@ -8,10 +8,36 @@ import '../core/app_messages.dart';
 import 'analysis_service.dart';
 import 'supabase_config.dart';
 
+double? _optionalDouble(Object? value) {
+  if (value == null || '$value'.trim().isEmpty) return null;
+  return double.tryParse('$value');
+}
+
+bool _parseBool(Object? value) {
+  return value == true || value == 1 || '$value'.toLowerCase() == 'true';
+}
+
+Map<String, double> _parseServingOptions(Object? rawServingOptions) {
+  final servingOptions = <String, double>{};
+  if (rawServingOptions is Map) {
+    rawServingOptions.forEach((key, value) {
+      final grams = double.tryParse('$value');
+      if (grams != null && grams > 0) {
+        servingOptions['$key'] = grams;
+      }
+    });
+  }
+  return servingOptions;
+}
+
 class MealItemDraft {
   final String foodNameRaw;
   final String foodNameConfirmed;
   final double caloriesRaw;
+  final double? carbsRaw;
+  final double? proteinRaw;
+  final double? fatRaw;
+  final double? giValueSnapshot;
   final double grams;
   final String servingUnit;
   final double? caloriesUserOverride;
@@ -21,6 +47,10 @@ class MealItemDraft {
     required this.foodNameRaw,
     required this.foodNameConfirmed,
     required this.caloriesRaw,
+    this.carbsRaw,
+    this.proteinRaw,
+    this.fatRaw,
+    this.giValueSnapshot,
     required this.grams,
     required this.servingUnit,
     this.caloriesUserOverride,
@@ -33,9 +63,15 @@ class FoodCalorieCatalogItem {
   final String name;
   final List<String> aliases;
   final double caloriesPer100g;
+  final double? carbsPer100g;
+  final double? proteinPer100g;
+  final double? fatPer100g;
+  final double? giValue;
   final Map<String, double> servingOptions;
   final String? category;
   final String? source;
+  final bool isAiGenerated;
+  final double? confidence;
   final double similarityScore;
 
   const FoodCalorieCatalogItem({
@@ -43,24 +79,19 @@ class FoodCalorieCatalogItem {
     required this.name,
     required this.aliases,
     required this.caloriesPer100g,
+    this.carbsPer100g,
+    this.proteinPer100g,
+    this.fatPer100g,
+    this.giValue,
     required this.servingOptions,
     this.category,
     this.source,
+    this.isAiGenerated = false,
+    this.confidence,
     this.similarityScore = 0,
   });
 
   factory FoodCalorieCatalogItem.fromMap(Map<String, dynamic> row) {
-    final rawServingOptions = row['serving_options'];
-    final servingOptions = <String, double>{};
-    if (rawServingOptions is Map) {
-      rawServingOptions.forEach((key, value) {
-        final grams = double.tryParse('$value');
-        if (grams != null && grams > 0) {
-          servingOptions['$key'] = grams;
-        }
-      });
-    }
-
     final rawAliases = row['aliases'];
     final aliases = rawAliases is List
         ? rawAliases.map((alias) => '$alias').toList()
@@ -70,37 +101,75 @@ class FoodCalorieCatalogItem {
       id: '${row['id'] ?? ''}',
       name: '${row['name'] ?? ''}',
       aliases: aliases,
-      caloriesPer100g:
-          double.tryParse('${row['calories_per_100g'] ?? 0}') ?? 0,
-      servingOptions: servingOptions,
+      caloriesPer100g: double.tryParse('${row['calories_per_100g'] ?? 0}') ?? 0,
+      carbsPer100g: _optionalDouble(row['carbs_per_100g']),
+      proteinPer100g: _optionalDouble(row['protein_per_100g']),
+      fatPer100g: _optionalDouble(row['fat_per_100g']),
+      giValue: _optionalDouble(row['gi_value']),
+      servingOptions: _parseServingOptions(row['serving_options']),
       category: row['category'] == null ? null : '${row['category']}',
       source: row['source'] == null ? null : '${row['source']}',
-      similarityScore:
-          double.tryParse('${row['similarity_score'] ?? 0}') ?? 0,
+      isAiGenerated: _parseBool(row['is_ai_generated']),
+      confidence: _optionalDouble(row['confidence']),
+      similarityScore: double.tryParse('${row['similarity_score'] ?? 0}') ?? 0,
     );
   }
 }
 
 class MealRecognitionItem {
   final String foodNameRaw;
+  final String? foodNameConfirmed;
   final double caloriesRaw;
+  final double? carbsPer100g;
+  final double? proteinPer100g;
+  final double? fatPer100g;
+  final double? giValue;
+  final Map<String, double> servingOptions;
+  final String? source;
+  final bool isAiGenerated;
+  final String? catalogId;
   final double confidence;
 
   const MealRecognitionItem({
     required this.foodNameRaw,
+    this.foodNameConfirmed,
     required this.caloriesRaw,
+    this.carbsPer100g,
+    this.proteinPer100g,
+    this.fatPer100g,
+    this.giValue,
+    this.servingOptions = const {},
+    this.source,
+    this.isAiGenerated = false,
+    this.catalogId,
     required this.confidence,
   });
+
+  factory MealRecognitionItem.fromMap(Map<dynamic, dynamic> item) {
+    return MealRecognitionItem(
+      foodNameRaw: '${item['food_name_raw'] ?? '未识别食物'}',
+      foodNameConfirmed: item['food_name_confirmed'] == null
+          ? null
+          : '${item['food_name_confirmed']}',
+      caloriesRaw: double.tryParse('${item['calories_raw'] ?? 0}') ?? 0,
+      carbsPer100g: _optionalDouble(item['carbs_per_100g']),
+      proteinPer100g: _optionalDouble(item['protein_per_100g']),
+      fatPer100g: _optionalDouble(item['fat_per_100g']),
+      giValue: _optionalDouble(item['gi_value']),
+      servingOptions: _parseServingOptions(item['serving_options']),
+      source: item['source'] == null ? null : '${item['source']}',
+      isAiGenerated: _parseBool(item['is_ai_generated']),
+      catalogId: item['catalog_id'] == null ? null : '${item['catalog_id']}',
+      confidence: double.tryParse('${item['confidence'] ?? 0}') ?? 0,
+    );
+  }
 }
 
 class MealRecognitionResult {
   final String storagePath;
   final List<MealRecognitionItem> items;
 
-  const MealRecognitionResult({
-    required this.storagePath,
-    required this.items,
-  });
+  const MealRecognitionResult({required this.storagePath, required this.items});
 }
 
 class HealthSnapshot {
@@ -359,12 +428,12 @@ class HealthRepository {
     },
   ];
 
-  SupabaseClient? get _client =>
-      _injectedClient ?? SupabaseConfig.tryClient();
+  SupabaseClient? get _client => _injectedClient ?? SupabaseConfig.tryClient();
 
   String? get currentUserId => _client?.auth.currentUser?.id;
 
-  bool get isConfigured => SupabaseConfig.isConfigured || _injectedClient != null;
+  bool get isConfigured =>
+      SupabaseConfig.isConfigured || _injectedClient != null;
 
   bool get isSignedIn => currentUserId != null;
 
@@ -384,10 +453,7 @@ class HealthRepository {
     return true;
   }
 
-  Future<void> signIn({
-    required String email,
-    required String password,
-  }) async {
+  Future<void> signIn({required String email, required String password}) async {
     final client = _requireClient();
     await client.auth.signInWithPassword(
       email: email.trim(),
@@ -623,9 +689,7 @@ class HealthRepository {
           .order('exercise_time', ascending: false),
     );
     final catalog = preloadedCatalog ?? await getExerciseCatalog();
-    final catalogById = {
-      for (final item in catalog) '${item['id']}': item,
-    };
+    final catalogById = {for (final item in catalog) '${item['id']}': item};
 
     return logs.map((log) {
       final motion = catalogById['${log['motion_id']}'];
@@ -690,10 +754,7 @@ class HealthRepository {
     try {
       final data = await client.rpc(
         'search_food_calorie_catalog',
-        params: {
-          'query_text': query.trim(),
-          'result_limit': limit,
-        },
+        params: {'query_text': query.trim(), 'result_limit': limit},
       );
       return _rows(data)
           .map(FoodCalorieCatalogItem.fromMap)
@@ -785,7 +846,9 @@ class HealthRepository {
     final bytes = await file.readAsBytes();
 
     try {
-      await client.storage.from(mealImageBucket).uploadBinary(
+      await client.storage
+          .from(mealImageBucket)
+          .uploadBinary(
             storagePath,
             bytes,
             fileOptions: FileOptions(
@@ -814,18 +877,7 @@ class HealthRepository {
     }
     final rawItems = data is Map ? data['items'] : null;
     final items = rawItems is List
-        ? rawItems
-            .whereType<Map>()
-            .map(
-              (item) => MealRecognitionItem(
-                foodNameRaw: '${item['food_name_raw'] ?? '未识别食物'}',
-                caloriesRaw:
-                    double.tryParse('${item['calories_raw'] ?? 0}') ?? 0,
-                confidence:
-                    double.tryParse('${item['confidence'] ?? 0}') ?? 0,
-              ),
-            )
-            .toList()
+        ? rawItems.whereType<Map>().map(MealRecognitionItem.fromMap).toList()
         : <MealRecognitionItem>[];
 
     return MealRecognitionResult(storagePath: storagePath, items: items);
@@ -848,7 +900,9 @@ class HealthRepository {
     });
 
     try {
-      await client.from('meal_items').insert(
+      await client
+          .from('meal_items')
+          .insert(
             items
                 .map(
                   (item) => {
@@ -857,11 +911,14 @@ class HealthRepository {
                     'food_name_raw': item.foodNameRaw.trim().isEmpty
                         ? item.foodNameConfirmed.trim()
                         : item.foodNameRaw.trim(),
-                    'food_name_confirmed':
-                        item.foodNameConfirmed.trim().isEmpty
-                            ? '未命名食物'
-                            : item.foodNameConfirmed.trim(),
+                    'food_name_confirmed': item.foodNameConfirmed.trim().isEmpty
+                        ? '未命名食物'
+                        : item.foodNameConfirmed.trim(),
                     'calories_raw': item.caloriesRaw,
+                    'carbs_raw': item.carbsRaw,
+                    'protein_raw': item.proteinRaw,
+                    'fat_raw': item.fatRaw,
+                    'gi_value_snapshot': item.giValueSnapshot,
                     'portion_size': 1.0,
                     'grams': item.grams,
                     'serving_unit': item.servingUnit.trim().isEmpty
@@ -1120,9 +1177,12 @@ class HealthRepository {
   }
 
   static String formatMealServingSummary(List<Map<String, dynamic>> items) {
-    return items.map(formatMealItemServingSummary).where((summary) {
-      return summary.trim().isNotEmpty;
-    }).join('、');
+    return items
+        .map(formatMealItemServingSummary)
+        .where((summary) {
+          return summary.trim().isNotEmpty;
+        })
+        .join('、');
   }
 
   static String formatMealItemServingSummary(Map<String, dynamic> item) {

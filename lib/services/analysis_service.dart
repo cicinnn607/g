@@ -135,11 +135,7 @@ class AnalysisService {
       level: 'yellow',
       reason: '可以吃，重点看份量，最好搭配蛋白质和蔬菜一起吃。',
     ),
-    FoodSignal(
-      name: '奶茶甜点',
-      level: 'red',
-      reason: '高糖高热量更容易带来波动，建议减少频率，偶尔少量。',
-    ),
+    FoodSignal(name: '奶茶甜点', level: 'red', reason: '高糖高热量更容易带来波动，建议减少频率，偶尔少量。'),
   ];
 
   static const List<FoodSignal> _homeFoodFillers = [
@@ -159,11 +155,7 @@ class AnalysisService {
       level: 'yellow',
       reason: '比甜面包更稳，但仍要看份量，搭配鸡蛋会更耐饿。',
     ),
-    FoodSignal(
-      name: '油炸主食',
-      level: 'red',
-      reason: '油脂和精制主食叠加时负担更重，建议少吃并控制份量。',
-    ),
+    FoodSignal(name: '油炸主食', level: 'red', reason: '油脂和精制主食叠加时负担更重，建议少吃并控制份量。'),
   ];
 
   static const List<FoodSignal> _diversityHomeFoodSignals = [
@@ -178,7 +170,6 @@ class AnalysisService {
       reason: '最近餐食种类偏少，可以加点鱼虾和绿叶菜，营养更均衡。',
     ),
   ];
-
 
   static const Map<String, List<String>> _homeReminderMessages = {
     'highGlucose': [
@@ -237,14 +228,18 @@ class AnalysisService {
     return double.parse(result.toStringAsFixed(1));
   }
 
-  static double calculateMealCaloriesByGrams(
-    num? caloriesPer100g,
-    num? grams,
-  ) {
+  static double calculateMealCaloriesByGrams(num? caloriesPer100g, num? grams) {
     final calories = (caloriesPer100g ?? 0).toDouble();
     final weight = (grams ?? 0).toDouble();
     if (calories <= 0 || weight <= 0) return 0;
     return double.parse((calories * weight / 100).toStringAsFixed(1));
+  }
+
+  static double calculateNutrientByGrams(num? valuePer100g, num? grams) {
+    final value = (valuePer100g ?? 0).toDouble();
+    final weight = (grams ?? 0).toDouble();
+    if (value <= 0 || weight <= 0) return 0;
+    return double.parse((value * weight / 100).toStringAsFixed(1));
   }
 
   static double resolveMealItemCalories({
@@ -346,9 +341,7 @@ class AnalysisService {
     final pairedCount = mealObservations
         .where((meal) => meal.glucoseCount > 0 || meal.statusCount > 0)
         .length;
-    final personalSignals = _buildFoodSignalsFromObservations(
-      mealObservations,
-    );
+    final personalSignals = _buildFoodSignalsFromObservations(mealObservations);
     final needsDiversity = _hasNarrowRecentDiet(mealObservations);
 
     final result = <FoodSignal>[];
@@ -372,8 +365,8 @@ class AnalysisService {
   ) {
     final byMeal = <String, _MealObservation>{};
     for (final item in mealItems) {
-      final name =
-          '${item['food_name_confirmed'] ?? item['name'] ?? ''}'.trim();
+      final name = '${item['food_name_confirmed'] ?? item['name'] ?? ''}'
+          .trim();
       if (name.isEmpty) continue;
       final mealId = '${item['meal_id'] ?? item['id'] ?? item.hashCode}';
       final mealTime = _parseDateTime(item['meal_time']);
@@ -405,7 +398,7 @@ class AnalysisService {
         final levelCompare = (rank[a.level] ?? 3).compareTo(rank[b.level] ?? 3);
         if (levelCompare != 0) return levelCompare;
         return a.name.compareTo(b.name);
-    });
+      });
     return result;
   }
 
@@ -589,7 +582,8 @@ class AnalysisService {
     }
 
     final unstableCount = stats.highGlucoseCount + stats.lowGlucoseCount;
-    if (unstableCount >= 2 || (unstableCount >= 1 && stats.badStatusCount >= 2)) {
+    if (unstableCount >= 2 ||
+        (unstableCount >= 1 && stats.badStatusCount >= 2)) {
       return FoodSignal(
         name: stats.name,
         level: 'red',
@@ -723,8 +717,8 @@ class AnalysisService {
       0,
       (sum, unit) => sum + unit,
     );
-    final index = (dayKey + scenarioSeed + totalRecords).abs() %
-        messages.length;
+    final index =
+        (dayKey + scenarioSeed + totalRecords).abs() % messages.length;
     return messages[index];
   }
 

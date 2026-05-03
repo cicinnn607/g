@@ -23,6 +23,12 @@ void main() {
     expect(AnalysisService.calculateMealCaloriesByGrams(116, 0), 0);
   });
 
+  test('按每100g营养素和克重计算营养总量', () {
+    expect(AnalysisService.calculateNutrientByGrams(25.9, 150), 38.9);
+    expect(AnalysisService.calculateNutrientByGrams(null, 150), 0);
+    expect(AnalysisService.calculateNutrientByGrams(25.9, null), 0);
+  });
+
   test('用户覆盖热量优先于每100g公式', () {
     expect(
       AnalysisService.resolveMealItemCalories(
@@ -66,7 +72,13 @@ void main() {
       'name': '煎牛排',
       'aliases': ['牛排'],
       'calories_per_100g': 180,
+      'carbs_per_100g': 1.2,
+      'protein_per_100g': 20,
+      'fat_per_100g': 9,
+      'gi_value': 20,
       'serving_options': {'1掌心': 100, '半掌心': 50},
+      'is_ai_generated': true,
+      'confidence': 0.85,
       'similarity_score': 0.7,
     });
 
@@ -74,16 +86,62 @@ void main() {
     expect(item.aliases, contains('牛排'));
     expect(item.servingOptions['1掌心'], 100);
     expect(item.caloriesPer100g, 180);
+    expect(item.carbsPer100g, 1.2);
+    expect(item.proteinPer100g, 20);
+    expect(item.fatPer100g, 9);
+    expect(item.giValue, 20);
+    expect(item.isAiGenerated, isTrue);
+    expect(item.confidence, 0.85);
+  });
+
+  test('识别结果兼容旧响应并解析新增营养字段', () {
+    final legacy = MealRecognitionItem.fromMap({
+      'food_name_raw': '米饭',
+      'calories_raw': 116,
+      'confidence': 0.9,
+    });
+    final upgraded = MealRecognitionItem.fromMap({
+      'food_name_raw': '宫保鸡丁',
+      'food_name_confirmed': '宫保鸡丁',
+      'calories_raw': 180,
+      'carbs_per_100g': 10,
+      'protein_per_100g': 12,
+      'fat_per_100g': 8,
+      'gi_value': 45,
+      'serving_options': {'1小盘': 180},
+      'source': 'zhipu',
+      'is_ai_generated': true,
+      'catalog_id': 'food_2',
+      'confidence': 0.85,
+    });
+
+    expect(legacy.foodNameRaw, '米饭');
+    expect(legacy.servingOptions, isEmpty);
+    expect(upgraded.foodNameConfirmed, '宫保鸡丁');
+    expect(upgraded.carbsPer100g, 10);
+    expect(upgraded.proteinPer100g, 12);
+    expect(upgraded.fatPer100g, 8);
+    expect(upgraded.giValue, 45);
+    expect(upgraded.servingOptions['1小盘'], 180);
+    expect(upgraded.isAiGenerated, isTrue);
+    expect(upgraded.catalogId, 'food_2');
   });
 
   test('meal_items 升级 migration 保留旧最终热量并重建公式', () {
     final migration = _readMealUpgradeMigration();
+    final nutritionMigration = _readNutritionMigration();
 
     expect(migration, contains('set calories_user_override = calories_final'));
     expect(
       migration,
       contains('coalesce(calories_raw, 0) * coalesce(grams, 0) / 100'),
     );
+    expect(nutritionMigration, contains('carbs_per_100g'));
+    expect(
+      nutritionMigration,
+      contains('coalesce(carbs_raw, 0) * coalesce(grams, 0) / 100'),
+    );
+    expect(nutritionMigration, contains("notify pgrst, 'reload schema'"));
   });
 
   test('Bucket not found 显示明确的 meal-images 配置提示', () {
@@ -550,5 +608,11 @@ class _SavingExerciseRepository extends HealthRepository {
 String _readMealUpgradeMigration() {
   return File(
     'supabase/migrations/202604300003_upgrade_meal_calorie_catalog.sql',
+  ).readAsStringSync();
+}
+
+String _readNutritionMigration() {
+  return File(
+    'supabase/migrations/202605030001_extend_diet_nutrition_recognition.sql',
   ).readAsStringSync();
 }
