@@ -31,6 +31,12 @@ class ManualInsight {
 }
 
 class AnalysisService {
+  static const double glucoseLowTarget = 3.9;
+  static const double glucoseHighTarget = 10.0;
+  static const double glucoseCvStableThreshold = 36.0;
+  static const double foodHighExcursionThreshold = 2.0;
+  static const double foodLowExcursionThreshold = 1.4;
+
   static const List<String> _redKeywords = [
     '奶茶',
     '甜',
@@ -264,8 +270,8 @@ class AnalysisService {
   }
 
   static String glucoseStatus(double value) {
-    if (value < 3.9) return '偏低';
-    if (value > 10.0) return '偏高';
+    if (value < glucoseLowTarget) return '偏低';
+    if (value > glucoseHighTarget) return '偏高';
     return '平稳';
   }
 
@@ -514,9 +520,9 @@ class AnalysisService {
       );
       if (meal == null) continue;
       meal.glucoseCount += 1;
-      if (value < 3.9) {
+      if (value < glucoseLowTarget) {
         meal.lowGlucoseCount += 1;
-      } else if (value > 10.0) {
+      } else if (value > glucoseHighTarget) {
         meal.highGlucoseCount += 1;
       } else {
         meal.stableGlucoseCount += 1;
@@ -631,9 +637,10 @@ class AnalysisService {
     final latestStatusLevel = '${latestStatus?['status_level'] ?? ''}';
 
     late final String scenario;
-    if (latestGlucoseValue != null && latestGlucoseValue > 10.0) {
+    if (latestGlucoseValue != null && latestGlucoseValue > glucoseHighTarget) {
       scenario = 'highGlucose';
-    } else if (latestGlucoseValue != null && latestGlucoseValue < 3.9) {
+    } else if (latestGlucoseValue != null &&
+        latestGlucoseValue < glucoseLowTarget) {
       scenario = 'lowGlucose';
     } else if (_isRecentMealWithoutExercise(
       latestMealTime,

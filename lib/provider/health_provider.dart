@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/analysis_service.dart';
+import '../services/analysis_report.dart';
 import '../services/health_repository.dart';
 import '../services/reminder_service.dart';
 
@@ -30,6 +31,9 @@ class HealthProvider with ChangeNotifier {
       HealthRepository.defaultExerciseCatalog;
   List<Map<String, dynamic>> _statusHistory = [];
   List<Map<String, dynamic>> _reminders = [];
+  AnalysisReport _analysisReport = AnalysisReport.empty;
+  bool isAnalysisLoading = false;
+  String? analysisError;
 
   int get totalRecords => _totalRecords;
   double get latestGlucose => _latestGlucose;
@@ -40,6 +44,7 @@ class HealthProvider with ChangeNotifier {
   List<Map<String, dynamic>> get exerciseCatalog => _exerciseCatalog;
   List<Map<String, dynamic>> get statusHistory => _statusHistory;
   List<Map<String, dynamic>> get reminders => _reminders;
+  AnalysisReport get analysisReport => _analysisReport;
   bool get isSignedIn => repository.isSignedIn;
 
   // Backwards-compatible names used by older pages/tests.
@@ -106,11 +111,46 @@ class HealthProvider with ChangeNotifier {
       _totalRecords = snapshot.totalRecords;
 
       await ReminderService.instance.syncReminders(_reminders);
+      await loadAnalysisReport(notify: false);
     } catch (error) {
       debugPrint('数据加载失败: $error');
     } finally {
       isLoading = false;
       notifyListeners();
+    }
+  }
+
+  Future<void> loadAnalysisReport({bool notify = true}) async {
+    if (!repository.isConfigured || !repository.isSignedIn) {
+      _analysisReport = AnalysisReport.empty;
+      analysisError = null;
+      isAnalysisLoading = false;
+      if (notify) notifyListeners();
+      return;
+    }
+
+    isAnalysisLoading = true;
+    analysisError = null;
+    if (notify) notifyListeners();
+    try {
+      final now = DateTime.now();
+      final start = DateTime(
+        now.year,
+        now.month,
+        now.day,
+      ).subtract(const Duration(days: 6));
+      final end = DateTime(now.year, now.month, now.day);
+      _analysisReport = await repository.getAnalysisReport(
+        startDate: start,
+        endDate: end,
+        timezone: 'Asia/Shanghai',
+      );
+    } catch (error) {
+      analysisError = '$error';
+      debugPrint('分析报告加载失败: $error');
+    } finally {
+      isAnalysisLoading = false;
+      if (notify) notifyListeners();
     }
   }
 
@@ -162,6 +202,9 @@ class HealthProvider with ChangeNotifier {
     _exerciseCatalog = HealthRepository.defaultExerciseCatalog;
     _statusHistory = [];
     _reminders = [];
+    _analysisReport = AnalysisReport.empty;
+    isAnalysisLoading = false;
+    analysisError = null;
     _latestGlucose = 0;
     _totalRecords = 0;
     notifyListeners();

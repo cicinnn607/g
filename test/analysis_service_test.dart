@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:glucose_assistant/core/app_messages.dart';
 import 'package:glucose_assistant/pages/exercise_page.dart';
 import 'package:glucose_assistant/provider/health_provider.dart';
+import 'package:glucose_assistant/services/analysis_report.dart';
 import 'package:glucose_assistant/services/analysis_service.dart';
 import 'package:glucose_assistant/services/health_repository.dart';
 import 'package:provider/provider.dart';
@@ -127,6 +128,52 @@ void main() {
     expect(upgraded.catalogId, 'food_2');
   });
 
+  test('分析报告模型兼容 null、数字字符串和缺失总结', () {
+    final report = AnalysisReport.fromMap({
+      'daily_stats': [
+        {
+          'record_date': '2026-05-02',
+          'reading_count': '1',
+          'avg_glucose': '10.0',
+          'cv': null,
+          'in_range_ratio': '1.0',
+        },
+      ],
+      'weekly_summary_metrics': {
+        'reading_count': '3',
+        'valid_day_count': 2,
+        'avg_glucose': '7.2',
+        'cv': null,
+      },
+      'food_signals': [
+        {
+          'food_name': '米饭',
+          'signal_level': 'yellow',
+          'avg_excursion': '1.8',
+          'meal_count': '2',
+          'reason': '继续观察',
+        },
+      ],
+      'data_quality': {
+        'reading_count': '3',
+        'valid_day_count': '2',
+        'has_enough_glucose': false,
+        'has_enough_food_signals': 'true',
+        'messages': ['本周血糖记录偏少'],
+      },
+    });
+
+    expect(report.dailyStats.single.recordDate, '2026-05-02');
+    expect(report.dailyStats.single.readingCount, 1);
+    expect(report.dailyStats.single.avgGlucose, 10.0);
+    expect(report.dailyStats.single.cv, isNull);
+    expect(report.weeklySummaryMetrics.readingCount, 3);
+    expect(report.weeklySummaryMetrics.cv, isNull);
+    expect(report.foodSignals.single.avgExcursion, 1.8);
+    expect(report.dataQuality.hasEnoughFoodSignals, isTrue);
+    expect(report.summaryText, isEmpty);
+  });
+
   test('meal_items 升级 migration 保留旧最终热量并重建公式', () {
     final migration = _readMealUpgradeMigration();
     final nutritionMigration = _readNutritionMigration();
@@ -142,6 +189,34 @@ void main() {
       contains('coalesce(carbs_raw, 0) * coalesce(grams, 0) / 100'),
     );
     expect(nutritionMigration, contains("notify pgrst, 'reload schema'"));
+  });
+
+  test('分析 migration 包含安全视图、时区 RPC 和最近餐次归因', () {
+    final migration = _readAnalysisMigration();
+
+    expect(migration, contains('with (security_invoker = true)'));
+    expect(migration, contains('RETURNS TABLE'));
+    expect(migration, contains('record_time at time zone'));
+    expect(migration, contains("unit = 'mg/dL'"));
+    expect(migration, contains('value / 18.0'));
+    expect(
+      migration,
+      contains('stddev_samp(glucose_mmol) / avg(glucose_mmol)'),
+    );
+    expect(migration, contains('order by m.meal_time desc'));
+    expect(migration, contains('get_food_impact_stats'));
+    expect(migration, contains('notify pgrst'));
+  });
+
+  test('analysis-report Edge Function 包含认证、RPC 和 LLM 超时兜底', () {
+    final functionCode = _readAnalysisFunction();
+
+    expect(functionCode, contains("client.auth.getUser()"));
+    expect(functionCode, contains("client.rpc(name, params)"));
+    expect(functionCode, contains('AbortController'));
+    expect(functionCode, contains('setTimeout'));
+    expect(functionCode, contains('ANALYSIS_LLM_API_KEY'));
+    expect(functionCode, contains('Asia/Shanghai'));
   });
 
   test('Bucket not found 显示明确的 meal-images 配置提示', () {
@@ -615,4 +690,14 @@ String _readNutritionMigration() {
   return File(
     'supabase/migrations/202605030001_extend_diet_nutrition_recognition.sql',
   ).readAsStringSync();
+}
+
+String _readAnalysisMigration() {
+  return File(
+    'supabase/migrations/202605030002_analysis_report.sql',
+  ).readAsStringSync();
+}
+
+String _readAnalysisFunction() {
+  return File('supabase/functions/analysis-report/index.ts').readAsStringSync();
 }

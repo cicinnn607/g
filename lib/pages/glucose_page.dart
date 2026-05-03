@@ -89,7 +89,11 @@ class _GlucoseRecordPageState extends State<GlucoseRecordPage> {
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<HealthProvider>();
-    final color = _glucoseColor(_value);
+    final mmolValue = _valueInMmol(_value, _unit);
+    final color = _glucoseColor(mmolValue);
+    final sliderMin = _unit == 'mg/dL' ? 10.0 : 0.6;
+    final sliderMax = _unit == 'mg/dL' ? 600.0 : 33.3;
+    final sliderDivisions = _unit == 'mg/dL' ? 590 : 327;
     return Scaffold(
       appBar: AppBar(title: const Text('血糖')),
       body: ListView(
@@ -112,16 +116,18 @@ class _GlucoseRecordPageState extends State<GlucoseRecordPage> {
                         ),
                       ),
                       const SizedBox(height: 6),
-                      Text('$_unit · ${AnalysisService.glucoseStatus(_value)}'),
+                      Text(
+                        '$_unit · ${AnalysisService.glucoseStatus(mmolValue)}',
+                      ),
                     ],
                   ),
                 ),
                 const SizedBox(height: 10),
                 Slider(
                   value: _value,
-                  min: 0.6,
-                  max: 33.3,
-                  divisions: 327,
+                  min: sliderMin,
+                  max: sliderMax,
+                  divisions: sliderDivisions,
                   activeColor: color,
                   onChanged: (value) => setState(() => _value = value),
                 ),
@@ -138,7 +144,9 @@ class _GlucoseRecordPageState extends State<GlucoseRecordPage> {
                         (period) => ChoiceChip(
                           label: Text(period),
                           selected: _period == period,
-                          selectedColor: AppColors.primary.withValues(alpha: 0.14),
+                          selectedColor: AppColors.primary.withValues(
+                            alpha: 0.14,
+                          ),
                           onSelected: (_) => setState(() => _period = period),
                         ),
                       )
@@ -161,8 +169,16 @@ class _GlucoseRecordPageState extends State<GlucoseRecordPage> {
                             child: Text('mg/dL'),
                           ),
                         ],
-                        onChanged: (value) =>
-                            setState(() => _unit = value ?? _unit),
+                        onChanged: (value) {
+                          final nextUnit = value ?? _unit;
+                          if (nextUnit == _unit) return;
+                          setState(() {
+                            _value = nextUnit == 'mg/dL'
+                                ? (_value * 18).clamp(10.0, 600.0)
+                                : (_value / 18).clamp(0.6, 33.3);
+                            _unit = nextUnit;
+                          });
+                        },
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -231,6 +247,8 @@ class _GlucoseRecordPageState extends State<GlucoseRecordPage> {
                     itemBuilder: (context, index) {
                       final record = provider.glucoseHistory[index];
                       final value = double.tryParse('${record['value']}') ?? 0;
+                      final unit = '${record['unit'] ?? 'mmol/L'}';
+                      final mmolValue = _valueInMmol(value, unit);
                       return Dismissible(
                         key: Key('bg_${record['id']}'),
                         direction: DismissDirection.endToStart,
@@ -245,15 +263,15 @@ class _GlucoseRecordPageState extends State<GlucoseRecordPage> {
                           contentPadding: EdgeInsets.zero,
                           leading: CircleAvatar(
                             backgroundColor: _glucoseColor(
-                              value,
+                              mmolValue,
                             ).withValues(alpha: 0.12),
                             child: Icon(
                               Icons.water_drop,
-                              color: _glucoseColor(value),
+                              color: _glucoseColor(mmolValue),
                             ),
                           ),
                           title: Text(
-                            '${value.toStringAsFixed(1)} ${record['unit']}',
+                            '${value.toStringAsFixed(1)} $unit',
                             style: const TextStyle(fontWeight: FontWeight.w800),
                           ),
                           subtitle: Text(
@@ -283,9 +301,14 @@ class _GlucoseRecordPageState extends State<GlucoseRecordPage> {
   }
 
   Color _glucoseColor(double value) {
-    if (value < 3.9) return AppColors.yellow;
-    if (value > 10.0) return AppColors.red;
+    if (value < AnalysisService.glucoseLowTarget) return AppColors.yellow;
+    if (value > AnalysisService.glucoseHighTarget) return AppColors.red;
     return AppColors.primary;
+  }
+
+  double _valueInMmol(double value, String unit) {
+    if (unit == 'mg/dL') return value / 18;
+    return value;
   }
 
   void _showSnack(String text) {

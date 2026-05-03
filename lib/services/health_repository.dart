@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 
 import '../core/app_messages.dart';
+import 'analysis_report.dart';
 import 'analysis_service.dart';
 import 'supabase_config.dart';
 
@@ -742,6 +743,28 @@ class HealthRepository {
     }
   }
 
+  Future<AnalysisReport> getAnalysisReport({
+    required DateTime startDate,
+    required DateTime endDate,
+    String timezone = 'Asia/Shanghai',
+  }) async {
+    final client = _requireClient();
+    _requireUserId();
+    final response = await client.functions.invoke(
+      'analysis-report',
+      body: {
+        'start_date': _dateOnly(startDate),
+        'end_date': _dateOnly(endDate),
+        'timezone': timezone,
+      },
+    );
+    final data = response.data;
+    if (data is Map) {
+      return AnalysisReport.fromMap(Map<String, dynamic>.from(data));
+    }
+    return AnalysisReport.empty;
+  }
+
   Future<List<FoodCalorieCatalogItem>> searchFoodCalorieCatalog(
     String query, {
     int limit = 8,
@@ -1205,6 +1228,13 @@ class HealthRepository {
   static String _formatCompactNumber(double value) {
     if (value == value.roundToDouble()) return value.toStringAsFixed(0);
     return value.toStringAsFixed(1);
+  }
+
+  static String _dateOnly(DateTime value) {
+    final local = value.toLocal();
+    return '${local.year.toString().padLeft(4, '0')}-'
+        '${local.month.toString().padLeft(2, '0')}-'
+        '${local.day.toString().padLeft(2, '0')}';
   }
 
   String _nameFromEmail(String? email) {
