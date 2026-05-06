@@ -82,8 +82,12 @@ class _GlucoseRecordPageState extends State<GlucoseRecordPage> {
 
   Future<void> _delete(String id) async {
     final provider = context.read<HealthProvider>();
-    await provider.repository.deleteGlucose(id);
-    await provider.loadDashboardData();
+    try {
+      await provider.deleteGlucoseRecord(id);
+    } catch (error) {
+      if (!mounted) return;
+      _showSnack(friendlyActionError(error, action: '删除血糖'));
+    }
   }
 
   @override

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../core/app_messages.dart';
 import '../core/app_style.dart';
 import '../provider/health_provider.dart';
 import '../widgets/soft_card.dart';
@@ -84,8 +85,14 @@ class _StatusRecordPageState extends State<StatusRecordPage> {
 
   Future<void> _delete(String id) async {
     final provider = context.read<HealthProvider>();
-    await provider.repository.deleteStatus(id);
-    await provider.loadDashboardData();
+    try {
+      await provider.deleteStatusRecord(id);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(friendlyActionError(error, action: '删除状态'))),
+      );
+    }
   }
 
   @override
@@ -140,9 +147,8 @@ class _StatusRecordPageState extends State<StatusRecordPage> {
                   relatedMealId: _relatedMealId,
                   relatedExerciseId: _relatedExerciseId,
                   selectDecoration: _selectDecoration,
-                  onToggle: () => setState(
-                    () => _showAssociations = !_showAssociations,
-                  ),
+                  onToggle: () =>
+                      setState(() => _showAssociations = !_showAssociations),
                   onMealChanged: (value) =>
                       setState(() => _relatedMealId = value),
                   onExerciseChanged: (value) =>
@@ -400,10 +406,7 @@ class _AssociationSection extends StatelessWidget {
                         ),
                       ),
                     ),
-                    Text(
-                      expanded ? '收起' : '展开',
-                      style: AppTextStyles.caption,
-                    ),
+                    Text(expanded ? '收起' : '展开', style: AppTextStyles.caption),
                     const SizedBox(width: 4),
                     Icon(
                       expanded
@@ -451,55 +454,43 @@ class _AssociationSection extends StatelessWidget {
   List<DropdownMenuItem<String?>> _mealItems() {
     if (mealHistory.isEmpty) {
       return const [
-        DropdownMenuItem<String?>(
-          value: null,
-          child: _DropdownText('暂无可关联餐食'),
-        ),
+        DropdownMenuItem<String?>(value: null, child: _DropdownText('暂无可关联餐食')),
       ];
     }
 
     return [
-      const DropdownMenuItem<String?>(
-        value: null,
-        child: _DropdownText('不关联'),
-      ),
-      ...mealHistory.take(6).map(
-        (meal) {
-          final mealId = '${meal['id'] ?? meal['meal_id']}';
-          return DropdownMenuItem<String?>(
-            value: mealId,
-            child: _DropdownText(
-              '${meal['meal_type']} · ${meal['food_names'] ?? '这餐'}',
-            ),
-          );
-        },
-      ),
+      const DropdownMenuItem<String?>(value: null, child: _DropdownText('不关联')),
+      ...mealHistory.take(6).map((meal) {
+        final mealId = '${meal['id'] ?? meal['meal_id']}';
+        return DropdownMenuItem<String?>(
+          value: mealId,
+          child: _DropdownText(
+            '${meal['meal_type']} · ${meal['food_names'] ?? '这餐'}',
+          ),
+        );
+      }),
     ];
   }
 
   List<DropdownMenuItem<String?>> _exerciseItems() {
     if (exerciseHistory.isEmpty) {
       return const [
-        DropdownMenuItem<String?>(
-          value: null,
-          child: _DropdownText('暂无可关联运动'),
-        ),
+        DropdownMenuItem<String?>(value: null, child: _DropdownText('暂无可关联运动')),
       ];
     }
 
     return [
-      const DropdownMenuItem<String?>(
-        value: null,
-        child: _DropdownText('不关联'),
-      ),
-      ...exerciseHistory.take(6).map(
-        (exercise) => DropdownMenuItem<String?>(
-          value: '${exercise['id']}',
-          child: _DropdownText(
-            '${exercise['motion_name'] ?? '运动'} · ${exercise['duration']}分钟',
+      const DropdownMenuItem<String?>(value: null, child: _DropdownText('不关联')),
+      ...exerciseHistory
+          .take(6)
+          .map(
+            (exercise) => DropdownMenuItem<String?>(
+              value: '${exercise['id']}',
+              child: _DropdownText(
+                '${exercise['motion_name'] ?? '运动'} · ${exercise['duration']}分钟',
+              ),
+            ),
           ),
-        ),
-      ),
     ];
   }
 }
@@ -555,10 +546,6 @@ class _DropdownText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      text,
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-    );
+    return Text(text, maxLines: 1, overflow: TextOverflow.ellipsis);
   }
 }

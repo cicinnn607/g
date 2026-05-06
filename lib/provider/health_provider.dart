@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../services/analysis_service.dart';
@@ -32,8 +34,12 @@ class HealthProvider with ChangeNotifier {
   List<Map<String, dynamic>> _statusHistory = [];
   List<Map<String, dynamic>> _reminders = [];
   AnalysisReport _analysisReport = AnalysisReport.empty;
+  AnalysisCards _analysisCards = AnalysisCards.empty;
   bool isAnalysisLoading = false;
+  bool isAnalysisCardsLoading = false;
   String? analysisError;
+  String? analysisCardsError;
+  String? _analysisCardsCacheKey;
 
   int get totalRecords => _totalRecords;
   double get latestGlucose => _latestGlucose;
@@ -45,6 +51,9 @@ class HealthProvider with ChangeNotifier {
   List<Map<String, dynamic>> get statusHistory => _statusHistory;
   List<Map<String, dynamic>> get reminders => _reminders;
   AnalysisReport get analysisReport => _analysisReport;
+  AnalysisCards get analysisCards => _analysisCards;
+  bool get isLoadingAnalysis => isAnalysisLoading;
+  bool get isLoadingAnalysisCards => isAnalysisCardsLoading;
   bool get isSignedIn => repository.isSignedIn;
 
   // Backwards-compatible names used by older pages/tests.
@@ -109,6 +118,7 @@ class HealthProvider with ChangeNotifier {
       _reminders = snapshot.reminders;
       _latestGlucose = snapshot.latestGlucose;
       _totalRecords = snapshot.totalRecords;
+      _invalidateAnalysisCardsCache();
 
       await ReminderService.instance.syncReminders(_reminders);
       await loadAnalysisReport(notify: false);
@@ -145,12 +155,137 @@ class HealthProvider with ChangeNotifier {
         endDate: end,
         timezone: 'Asia/Shanghai',
       );
+      unawaited(loadAnalysisCards(startDate: start, endDate: end));
     } catch (error) {
       analysisError = '$error';
       debugPrint('分析报告加载失败: $error');
     } finally {
       isAnalysisLoading = false;
       if (notify) notifyListeners();
+    }
+  }
+
+  Future<void> loadAnalysisCards({
+    DateTime? startDate,
+    DateTime? endDate,
+    bool force = false,
+  }) async {
+    if (!repository.isConfigured || !repository.isSignedIn) {
+      _analysisCards = AnalysisCards.empty;
+      analysisCardsError = null;
+      isAnalysisCardsLoading = false;
+      notifyListeners();
+      return;
+    }
+
+    final now = DateTime.now();
+    final start =
+        startDate ??
+        DateTime(
+          now.year,
+          now.month,
+          now.day,
+        ).subtract(const Duration(days: 6));
+    final end = endDate ?? DateTime(now.year, now.month, now.day);
+    final localCacheKey = _buildLocalAnalysisCardsCacheKey(start, end);
+    if (!force &&
+        _analysisCardsCacheKey == localCacheKey &&
+        _analysisCards != AnalysisCards.empty) {
+      return;
+    }
+
+    isAnalysisCardsLoading = true;
+    analysisCardsError = null;
+    notifyListeners();
+    try {
+      final cards = await repository.getAnalysisCards(
+        startDate: start,
+        endDate: end,
+        timezone: 'Asia/Shanghai',
+      );
+      _analysisCards = cards;
+      _analysisCardsCacheKey = localCacheKey;
+    } catch (error) {
+      analysisCardsError = '$error';
+      debugPrint('AI 分析卡片加载失败: $error');
+      _analysisCards = AnalysisCards.empty;
+      _analysisCardsCacheKey = localCacheKey;
+    } finally {
+      isAnalysisCardsLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> deleteGlucoseRecord(String id) async {
+    final previous = _glucoseHistory;
+    _glucoseHistory = _glucoseHistory
+        .where((record) => '${record['id']}' != id)
+        .toList();
+    notifyListeners();
+
+    try {
+      await repository.deleteGlucose(id);
+      await loadDashboardData();
+    } catch (_) {
+      _glucoseHistory = previous;
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  Future<void> deleteMealRecord(String id) async {
+    final previousMeals = _mealHistory;
+    final previousItems = _mealItems;
+    _mealHistory = _mealHistory
+        .where((meal) => '${meal['id'] ?? meal['meal_id']}' != id)
+        .toList();
+    _mealItems = _mealItems
+        .where((item) => '${item['meal_id']}' != id)
+        .toList();
+    notifyListeners();
+
+    try {
+      await repository.deleteMeal(id);
+      await loadDashboardData();
+    } catch (_) {
+      _mealHistory = previousMeals;
+      _mealItems = previousItems;
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  Future<void> deleteExerciseRecord(String id) async {
+    final previous = _exerciseHistory;
+    _exerciseHistory = _exerciseHistory
+        .where((record) => '${record['id']}' != id)
+        .toList();
+    notifyListeners();
+
+    try {
+      await repository.deleteExercise(id);
+      await loadDashboardData();
+    } catch (_) {
+      _exerciseHistory = previous;
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  Future<void> deleteStatusRecord(String id) async {
+    final previous = _statusHistory;
+    _statusHistory = _statusHistory
+        .where((record) => '${record['id']}' != id)
+        .toList();
+    notifyListeners();
+
+    try {
+      await repository.deleteStatus(id);
+      await loadDashboardData();
+    } catch (_) {
+      _statusHistory = previous;
+      notifyListeners();
+      rethrow;
     }
   }
 
@@ -203,10 +338,44 @@ class HealthProvider with ChangeNotifier {
     _statusHistory = [];
     _reminders = [];
     _analysisReport = AnalysisReport.empty;
+    _analysisCards = AnalysisCards.empty;
     isAnalysisLoading = false;
+    isAnalysisCardsLoading = false;
     analysisError = null;
+    analysisCardsError = null;
+    _analysisCardsCacheKey = null;
     _latestGlucose = 0;
     _totalRecords = 0;
     notifyListeners();
+  }
+
+  void _invalidateAnalysisCardsCache() {
+    final nextKey = _buildLocalAnalysisCardsCacheKey(null, null);
+    if (_analysisCardsCacheKey != null && _analysisCardsCacheKey != nextKey) {
+      _analysisCards = AnalysisCards.empty;
+      _analysisCardsCacheKey = null;
+      analysisCardsError = null;
+    }
+  }
+
+  String _buildLocalAnalysisCardsCacheKey(DateTime? start, DateTime? end) {
+    final latestTimes = <String>[
+      ..._glucoseHistory.map((item) => '${item['record_time'] ?? ''}'),
+      ..._mealHistory.map((item) => '${item['meal_time'] ?? ''}'),
+      ..._exerciseHistory.map((item) => '${item['exercise_time'] ?? ''}'),
+      ..._statusHistory.map((item) => '${item['record_time'] ?? ''}'),
+    ]..sort();
+    final range = start == null || end == null
+        ? 'current'
+        : '${start.toIso8601String()}|${end.toIso8601String()}';
+    return [
+      range,
+      _glucoseHistory.length,
+      _mealHistory.length,
+      _mealItems.length,
+      _exerciseHistory.length,
+      _statusHistory.length,
+      latestTimes.isEmpty ? 'empty' : latestTimes.last,
+    ].join('|');
   }
 }

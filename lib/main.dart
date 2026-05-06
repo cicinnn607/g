@@ -17,17 +17,24 @@ Future<void> main() async {
   await SupabaseConfig.initialize();
   await ReminderService.instance.initialize();
   final isLoggedIn = SupabaseConfig.tryClient()?.auth.currentSession != null;
+  final supabaseAvailable = SupabaseConfig.isAvailable;
 
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider(
-          create: (_) => HealthProvider()..loadDashboardData(),
+          create: (_) {
+            final provider = HealthProvider();
+            if (supabaseAvailable) {
+              provider.loadDashboardData();
+            }
+            return provider;
+          },
         ),
       ],
       child: GlucoseAssistantApp(
         isLoggedIn: isLoggedIn,
-        supabaseConfigured: SupabaseConfig.isConfigured,
+        supabaseConfigured: supabaseAvailable,
       ),
     ),
   );

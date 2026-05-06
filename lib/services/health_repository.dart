@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:image_picker/image_picker.dart';
@@ -750,19 +751,68 @@ class HealthRepository {
   }) async {
     final client = _requireClient();
     _requireUserId();
-    final response = await client.functions.invoke(
-      'analysis-report',
-      body: {
-        'start_date': _dateOnly(startDate),
-        'end_date': _dateOnly(endDate),
-        'timezone': timezone,
-      },
-    );
+    final accessToken = client.auth.currentSession?.accessToken;
+    final response = await client.functions
+        .invoke(
+          'analysis-report',
+          headers: accessToken == null
+              ? null
+              : {'Authorization': 'Bearer $accessToken'},
+          body: {
+            'start_date': _dateOnly(startDate),
+            'end_date': _dateOnly(endDate),
+            'timezone': timezone,
+          },
+        )
+        .timeout(
+          const Duration(seconds: 8),
+          onTimeout: () => throw TimeoutException('analysis-report 请求超时'),
+        );
     final data = response.data;
     if (data is Map) {
-      return AnalysisReport.fromMap(Map<String, dynamic>.from(data));
+      final map = Map<String, dynamic>.from(data);
+      if (map['error'] != null) {
+        throw StateError('analysis-report: ${map['error']}');
+      }
+      return AnalysisReport.fromMap(map);
     }
-    return AnalysisReport.empty;
+    throw StateError('analysis-report 返回了无法解析的数据');
+  }
+
+  Future<AnalysisCards> getAnalysisCards({
+    required DateTime startDate,
+    required DateTime endDate,
+    String timezone = 'Asia/Shanghai',
+  }) async {
+    final client = _requireClient();
+    _requireUserId();
+    final accessToken = client.auth.currentSession?.accessToken;
+    final response = await client.functions
+        .invoke(
+          'analysis-report',
+          headers: accessToken == null
+              ? null
+              : {'Authorization': 'Bearer $accessToken'},
+          body: {
+            'mode': 'cards',
+            'start_date': _dateOnly(startDate),
+            'end_date': _dateOnly(endDate),
+            'timezone': timezone,
+          },
+        )
+        .timeout(
+          const Duration(seconds: 15),
+          onTimeout: () => throw TimeoutException('analysis cards 请求超时'),
+        );
+    final data = response.data;
+    if (data is Map) {
+      final map = Map<String, dynamic>.from(data);
+      if (map['error'] != null) {
+        throw StateError('analysis cards: ${map['error']}');
+      }
+      return AnalysisCards.fromMap(map);
+    }
+    throw StateError('analysis cards 返回了无法解析的数据');
   }
 
   Future<List<FoodCalorieCatalogItem>> searchFoodCalorieCatalog(

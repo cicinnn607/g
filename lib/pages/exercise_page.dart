@@ -95,8 +95,12 @@ class _ExerciseRecordPageState extends State<ExerciseRecordPage> {
 
   Future<void> _delete(String id) async {
     final provider = context.read<HealthProvider>();
-    await provider.repository.deleteExercise(id);
-    await provider.loadDashboardData();
+    try {
+      await provider.deleteExerciseRecord(id);
+    } catch (error) {
+      if (!mounted) return;
+      _showSnack(friendlyActionError(error, action: '删除运动'));
+    }
   }
 
   @override

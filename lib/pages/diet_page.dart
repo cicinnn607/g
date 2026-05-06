@@ -188,8 +188,12 @@ class _DietRecordPageState extends State<DietRecordPage> {
 
   Future<void> _delete(String mealId) async {
     final provider = context.read<HealthProvider>();
-    await provider.repository.deleteMeal(mealId);
-    await provider.loadDashboardData();
+    try {
+      await provider.deleteMealRecord(mealId);
+    } catch (error) {
+      if (!mounted) return;
+      _showSnack(friendlyActionError(error, action: '删除饮食'));
+    }
   }
 
   void _showSnack(String text) {

@@ -161,6 +161,9 @@ void main() {
         'has_enough_food_signals': 'true',
         'messages': ['本周血糖记录偏少'],
       },
+      'summary_text': '近期血糖整体比较平稳，请继续保持记录。',
+      'summary_source': 'template',
+      'summary_error': 'missing_llm_config',
     });
 
     expect(report.dailyStats.single.recordDate, '2026-05-02');
@@ -171,7 +174,58 @@ void main() {
     expect(report.weeklySummaryMetrics.cv, isNull);
     expect(report.foodSignals.single.avgExcursion, 1.8);
     expect(report.dataQuality.hasEnoughFoodSignals, isTrue);
-    expect(report.summaryText, isEmpty);
+    expect(report.summaryText, '近期血糖整体比较平稳，请继续保持记录。');
+    expect(report.summarySource, 'template');
+    expect(report.summaryError, 'missing_llm_config');
+  });
+
+  test('AI 分析卡片模型解析并过滤危险医疗词', () {
+    final cards = AnalysisCards.fromMap({
+      'analysis_cards_source': 'llm',
+      'evidence_cache_key': 'demo-key',
+      'analysis_cards': {
+        'overall': {
+          'title': '本周重点',
+          'summary': '观察到早餐后状态更值得继续记录。',
+          'confidence': 'medium',
+          'confidence_reason': '记录覆盖多天',
+        },
+        'diet_cards': [
+          {
+            'title': '米饭和奶茶',
+            'signal': 'red',
+            'evidence': '餐后读数偏高，状态略感疲惫',
+            'suggestion': '下次减少甜饮并饭后轻走。',
+            'next_record': '餐后2小时补血糖',
+          },
+          {
+            'title': '危险文案',
+            'signal': 'bad',
+            'evidence': '需要确诊',
+            'suggestion': '建议就医',
+            'next_record': '',
+          },
+        ],
+        'exercise_card': {
+          'title': '饭后轻动',
+          'evidence': '本周运动记录偏少',
+          'suggestion': '先从饭后轻走10分钟开始。',
+        },
+        'next_steps': [
+          {'type': 'glucose', 'task': '餐后2小时补血糖'},
+          {'type': 'unknown', 'task': '继续记录下一餐'},
+        ],
+        'safety_note': '仅供生活习惯参考，不替代医疗建议。',
+      },
+    });
+
+    expect(cards.isLlm, isTrue);
+    expect(cards.cacheKey, 'demo-key');
+    expect(cards.overall.confidence, 'medium');
+    expect(cards.dietCards.first.signal, 'red');
+    expect(cards.dietCards.last.signal, 'observe');
+    expect(cards.dietCards.last.evidence, '样本还少，建议继续配对记录。');
+    expect(cards.nextSteps.last.type, 'diet');
   });
 
   test('meal_items 升级 migration 保留旧最终热量并重建公式', () {
@@ -208,15 +262,57 @@ void main() {
     expect(migration, contains('notify pgrst'));
   });
 
-  test('analysis-report Edge Function 包含认证、RPC 和 LLM 超时兜底', () {
+  test('analysis-report Edge Function 包含认证、RPC 和 AI 卡片兜底', () {
     final functionCode = _readAnalysisFunction();
 
-    expect(functionCode, contains("client.auth.getUser()"));
+    expect(functionCode, contains("userClient.auth.getUser()"));
     expect(functionCode, contains("client.rpc(name, params)"));
+    expect(functionCode, contains("SUPABASE_SERVICE_ROLE_KEY"));
+    expect(functionCode, contains(".eq('user_id', userId)"));
     expect(functionCode, contains('AbortController'));
-    expect(functionCode, contains('setTimeout'));
+    expect(
+      functionCode,
+      contains('setTimeout(() => controller.abort(), 12000)'),
+    );
+    expect(functionCode, isNot(contains('50-80字')));
     expect(functionCode, contains('ANALYSIS_LLM_API_KEY'));
+    expect(functionCode, contains('ZHIPU_API_KEY'));
+    expect(
+      functionCode,
+      contains('open.bigmodel.cn/api/paas/v4/chat/completions'),
+    );
+    expect(functionCode, contains('glm-4.7-flash'));
+    expect(functionCode, contains('summary_source'));
+    expect(functionCode, contains('summary_error'));
+    expect(functionCode, contains("body.mode === 'cards'"));
+    expect(functionCode, contains('analysis_cards'));
+    expect(functionCode, contains('buildAnalysisCards'));
+    expect(functionCode, contains('hasUsableCardsData'));
+    expect(functionCode, contains('extractJsonObject'));
+    expect(functionCode, contains('```json'));
+    expect(functionCode, contains('普通人群血糖健康管理助手'));
+    expect(functionCode, contains('buildSummaryPrompt'));
+    expect(functionCode, contains('sanitizeLlmSummary'));
+    expect(functionCode, contains('近期血糖主要在'));
+    expect(functionCode, contains('近期记录的数据较少'));
     expect(functionCode, contains('Asia/Shanghai'));
+  });
+
+  test('分析页使用 AI 卡片化局部加载并移除重复卡片', () {
+    final pageCode = _readAnalysisPage();
+
+    expect(pageCode, isNot(contains('远端分析暂时不可用')));
+    expect(pageCode, isNot(contains('本地规则总结')));
+    expect(pageCode, contains('provider.isLoadingAnalysisCards'));
+    expect(pageCode, contains('_WeeklyFocusCard'));
+    expect(pageCode, contains('_DietObservationCard'));
+    expect(pageCode, contains('_NextStepsCard'));
+    expect(pageCode, contains('Icons.insights'));
+    expect(pageCode, isNot(contains('_TrendChartCard(data: data)')));
+    expect(
+      pageCode,
+      isNot(contains('_FoodSignalsCard(signals: data.foodSignals)')),
+    );
   });
 
   test('Bucket not found 显示明确的 meal-images 配置提示', () {
@@ -542,6 +638,48 @@ void main() {
     expect(provider.weight, 58.5);
   });
 
+  test('删除血糖记录会先从界面数据移除', () async {
+    final repository = _DeletingRepository();
+    final provider = HealthProvider(repository: repository);
+    await provider.loadDashboardData();
+
+    final deleteFuture = provider.deleteGlucoseRecord('bg_1');
+
+    expect(provider.glucoseHistory.map((item) => item['id']), ['bg_2']);
+    expect(repository.deleteGlucoseCalls, 1);
+
+    repository.completeDelete();
+    await deleteFuture;
+  });
+
+  test('删除血糖失败时会恢复原列表', () async {
+    final repository = _DeletingRepository(failDelete: true);
+    final provider = HealthProvider(repository: repository);
+    await provider.loadDashboardData();
+
+    await expectLater(
+      provider.deleteGlucoseRecord('bg_1'),
+      throwsA(isA<StateError>()),
+    );
+
+    expect(provider.glucoseHistory.map((item) => item['id']), ['bg_1', 'bg_2']);
+  });
+
+  test('删除饮食记录会同步移除餐食和食物明细', () async {
+    final repository = _DeletingRepository();
+    final provider = HealthProvider(repository: repository);
+    await provider.loadDashboardData();
+
+    final deleteFuture = provider.deleteMealRecord('meal_1');
+
+    expect(provider.mealHistory.map((item) => item['id']), ['meal_2']);
+    expect(provider.mealItems.map((item) => item['meal_id']), ['meal_2']);
+    expect(repository.deleteMealCalls, 1);
+
+    repository.completeDelete();
+    await deleteFuture;
+  });
+
   testWidgets('运动保存按钮防止连击', (tester) async {
     final repository = _SavingExerciseRepository();
     final provider = HealthProvider(repository: repository);
@@ -605,6 +743,67 @@ class _ProfileRepository extends HealthRepository {
       'weight': 58.5,
       'record_time': DateTime(2026, 4, 30).toIso8601String(),
     };
+  }
+}
+
+class _DeletingRepository extends HealthRepository {
+  _DeletingRepository({this.failDelete = false});
+
+  final bool failDelete;
+  final _deleteCompleter = Completer<void>();
+  int deleteGlucoseCalls = 0;
+  int deleteMealCalls = 0;
+
+  @override
+  Future<HealthSnapshot> loadSnapshot() async {
+    return HealthSnapshot(
+      profile: {
+        'id': 'test-user',
+        'display_name': '稳稳',
+        'gender': '男',
+        'height': 170.0,
+        'birth_date': '2000-01-01',
+      },
+      weight: 65.0,
+      age: 26,
+      hasBodyMetric: true,
+      glucoseRecords: const [
+        {'id': 'bg_1', 'value': 5.5},
+        {'id': 'bg_2', 'value': 6.1},
+      ],
+      meals: const [
+        {'id': 'meal_1', 'meal_time': '2026-05-04T08:00:00.000'},
+        {'id': 'meal_2', 'meal_time': '2026-05-04T12:00:00.000'},
+      ],
+      mealItems: const [
+        {'id': 'item_1', 'meal_id': 'meal_1'},
+        {'id': 'item_2', 'meal_id': 'meal_2'},
+      ],
+      exercises: const [],
+      exerciseCatalog: HealthRepository.defaultExerciseCatalog,
+      statuses: const [],
+      reminders: const [],
+    );
+  }
+
+  @override
+  Future<void> deleteGlucose(String id) async {
+    deleteGlucoseCalls += 1;
+    if (failDelete) throw StateError('delete failed');
+    return _deleteCompleter.future;
+  }
+
+  @override
+  Future<void> deleteMeal(String mealId) async {
+    deleteMealCalls += 1;
+    if (failDelete) throw StateError('delete failed');
+    return _deleteCompleter.future;
+  }
+
+  void completeDelete() {
+    if (!_deleteCompleter.isCompleted) {
+      _deleteCompleter.complete();
+    }
   }
 }
 
@@ -700,4 +899,8 @@ String _readAnalysisMigration() {
 
 String _readAnalysisFunction() {
   return File('supabase/functions/analysis-report/index.ts').readAsStringSync();
+}
+
+String _readAnalysisPage() {
+  return File('lib/pages/analysis_page.dart').readAsStringSync();
 }
