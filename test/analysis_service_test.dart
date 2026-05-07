@@ -179,9 +179,10 @@ void main() {
     expect(report.summaryError, 'missing_llm_config');
   });
 
-  test('AI 分析卡片模型解析并过滤危险医疗词', () {
+  test('AI 分析报告模型解析并过滤危险医疗词', () {
     final cards = AnalysisCards.fromMap({
       'analysis_cards_source': 'llm',
+      'report_type': 'lifestyle_no_glucose',
       'evidence_cache_key': 'demo-key',
       'analysis_cards': {
         'overall': {
@@ -190,42 +191,46 @@ void main() {
           'confidence': 'medium',
           'confidence_reason': '记录覆盖多天',
         },
-        'diet_cards': [
-          {
-            'title': '米饭和奶茶',
-            'signal': 'red',
-            'evidence': '餐后读数偏高，状态略感疲惫',
-            'suggestion': '下次减少甜饮并饭后轻走。',
-            'next_record': '餐后2小时补血糖',
-          },
-          {
-            'title': '危险文案',
-            'signal': 'bad',
-            'evidence': '需要确诊',
-            'suggestion': '建议就医',
-            'next_record': '',
-          },
-        ],
-        'exercise_card': {
-          'title': '饭后轻动',
-          'evidence': '本周运动记录偏少',
-          'suggestion': '先从饭后轻走10分钟开始。',
-        },
-        'next_steps': [
-          {'type': 'glucose', 'task': '餐后2小时补血糖'},
-          {'type': 'unknown', 'task': '继续记录下一餐'},
-        ],
+        'report_markdown': '''
+### 🌟 本周整体概览
+观察到早餐后状态更值得继续记录。
+
+### 🥗 饮食与精力追踪
+米饭和奶茶这类餐次可以继续观察餐后读数和状态。
+
+### 🏃‍♂️ 运动与代谢反馈
+本周运动记录偏少，可以先从饭后轻走10分钟开始。
+
+### 💡 下一步微量改变
+下次补一条餐后2小时血糖和状态备注。
+''',
         'safety_note': '仅供生活习惯参考，不替代医疗建议。',
+      },
+    });
+    final unsafeCards = AnalysisCards.fromMap({
+      'analysis_cards_source': 'llm',
+      'analysis_cards': {
+        'overall': {'title': '本周重点', 'summary': '需要确诊', 'confidence': 'medium'},
+        'report_markdown': '建议就医并确诊',
+        'safety_note': '建议就医',
       },
     });
 
     expect(cards.isLlm, isTrue);
+    expect(cards.reportType, 'lifestyle_no_glucose');
+    expect(cards.isLifestyleNoGlucose, isTrue);
     expect(cards.cacheKey, 'demo-key');
     expect(cards.overall.confidence, 'medium');
-    expect(cards.dietCards.first.signal, 'red');
-    expect(cards.dietCards.last.signal, 'observe');
-    expect(cards.dietCards.last.evidence, '样本还少，建议继续配对记录。');
-    expect(cards.nextSteps.last.type, 'diet');
+    expect(cards.reportMarkdown, contains('🌟 本周整体概览'));
+    expect(cards.reportMarkdown, contains('🥗 饮食与精力追踪'));
+    expect(unsafeCards.overall.summary, contains('样本还少'));
+    expect(unsafeCards.reportMarkdown, isEmpty);
+    expect(unsafeCards.safetyNote, '仅供生活习惯参考，不替代医疗建议。');
+  });
+
+  test('空分析报告模型不会用默认长文抢跑 AI', () {
+    expect(AnalysisCards.empty.reportMarkdown, isEmpty);
+    expect(AnalysisCards.empty.reportType, 'glucose_report');
   });
 
   test('meal_items 升级 migration 保留旧最终热量并重建公式', () {
@@ -247,6 +252,7 @@ void main() {
 
   test('分析 migration 包含安全视图、时区 RPC 和最近餐次归因', () {
     final migration = _readAnalysisMigration();
+    final serviceRoleGrant = _readAnalysisServiceRoleGrantMigration();
 
     expect(migration, contains('with (security_invoker = true)'));
     expect(migration, contains('RETURNS TABLE'));
@@ -260,19 +266,38 @@ void main() {
     expect(migration, contains('order by m.meal_time desc'));
     expect(migration, contains('get_food_impact_stats'));
     expect(migration, contains('notify pgrst'));
+    expect(serviceRoleGrant, contains('to service_role'));
+    expect(serviceRoleGrant, contains('public.wellness_status'));
+    expect(serviceRoleGrant, contains('public.blood_glucose_logs'));
+    expect(serviceRoleGrant, contains('public.meals'));
+    expect(serviceRoleGrant, contains('public.exercise_logs'));
+    expect(
+      serviceRoleGrant,
+      contains(
+        "to_regprocedure('public.get_energy_correlation(date,date,text)'",
+      ),
+    );
+    expect(
+      serviceRoleGrant,
+      contains('grant execute on function public.get_energy_correlation'),
+    );
   });
 
-  test('analysis-report Edge Function 包含认证、RPC 和 AI 卡片兜底', () {
+  test('analysis-report Edge Function 包含认证、RPC 和 AI Markdown 报告兜底', () {
     final functionCode = _readAnalysisFunction();
 
     expect(functionCode, contains("userClient.auth.getUser()"));
     expect(functionCode, contains("client.rpc(name, params)"));
     expect(functionCode, contains("SUPABASE_SERVICE_ROLE_KEY"));
     expect(functionCode, contains(".eq('user_id', userId)"));
+    expect(functionCode, contains('functionVersion'));
+    expect(functionCode, contains('analysis-report-2026-05-06-v2'));
+    expect(functionCode, contains('describeError'));
+    expect(functionCode, contains("return json({ error: message }, 500)"));
     expect(functionCode, contains('AbortController'));
     expect(
       functionCode,
-      contains('setTimeout(() => controller.abort(), 12000)'),
+      contains('setTimeout(() => controller.abort(), 45000)'),
     );
     expect(functionCode, isNot(contains('50-80字')));
     expect(functionCode, contains('ANALYSIS_LLM_API_KEY'));
@@ -287,10 +312,44 @@ void main() {
     expect(functionCode, contains("body.mode === 'cards'"));
     expect(functionCode, contains('analysis_cards'));
     expect(functionCode, contains('buildAnalysisCards'));
+    expect(functionCode, contains('maxEvidenceRows'));
+    expect(
+      functionCode,
+      contains(
+        'const report = await buildReportInFunction(admin, userData.user.id, range, timezone);',
+      ),
+    );
+    expect(functionCode, contains('thinking'));
+    expect(functionCode, contains("type: 'disabled'"));
+    expect(functionCode, contains('max_tokens'));
+    expect(functionCode, contains('llmHttpError'));
     expect(functionCode, contains('hasUsableCardsData'));
-    expect(functionCode, contains('extractJsonObject'));
-    expect(functionCode, contains('```json'));
-    expect(functionCode, contains('普通人群血糖健康管理助手'));
+    expect(functionCode, contains('lifestyle_no_glucose'));
+    expect(functionCode, contains('hasLifestyleNoGlucoseData'));
+    expect(functionCode, contains('lifestyleNoGlucoseSystemPrompt'));
+    expect(functionCode, contains('buildFallbackLifestyleNoGlucoseReport'));
+    expect(functionCode, contains('不能评价血糖平稳'));
+    expect(functionCode, contains('不要重新计算或推断任何血糖指标'));
+    expect(functionCode, contains('### 🏃‍♂️ 运动与状态反馈'));
+    expect(functionCode, contains('report_markdown'));
+    expect(functionCode, contains('sanitizeReportMarkdown'));
+    expect(functionCode, contains('normalizeReportHeadings'));
+    expect(functionCode, contains('stripBenignMedicalDisclaimers'));
+    expect(functionCode, contains('user_profile'));
+    expect(functionCode, contains('glucose_records'));
+    expect(functionCode, contains('calories_final'));
+    expect(functionCode, contains('fetchMealItemsForEvidence'));
+    expect(functionCode, contains('portion_size'));
+    expect(functionCode, contains('calories_burned'));
+    expect(functionCode, isNot(contains('exercise_catalog(name)')));
+    expect(functionCode, contains('status_evidence'));
+    expect(functionCode, contains('私人精力与身材管理教练'));
+    expect(functionCode, contains('绝对不要输出任何 JSON 代码'));
+    expect(functionCode, contains('### 🌟 本周整体概览'));
+    expect(functionCode, isNot(contains('extractJsonObject')));
+    expect(functionCode, isNot(contains('```json')));
+    expect(functionCode, isNot(contains('输出必须是合法 JSON')));
+    expect(functionCode, isNot(contains('不要输出 Markdown')));
     expect(functionCode, contains('buildSummaryPrompt'));
     expect(functionCode, contains('sanitizeLlmSummary'));
     expect(functionCode, contains('近期血糖主要在'));
@@ -298,20 +357,76 @@ void main() {
     expect(functionCode, contains('Asia/Shanghai'));
   });
 
-  test('分析页使用 AI 卡片化局部加载并移除重复卡片', () {
+  test('分析页使用 Markdown 报告并移除旧建议卡片', () {
     final pageCode = _readAnalysisPage();
+    final providerCode = _readHealthProvider();
 
     expect(pageCode, isNot(contains('远端分析暂时不可用')));
     expect(pageCode, isNot(contains('本地规则总结')));
     expect(pageCode, contains('provider.isLoadingAnalysisCards'));
+    expect(providerCode, isNot(contains('unawaited(loadAnalysisCards')));
     expect(pageCode, contains('_WeeklyFocusCard'));
-    expect(pageCode, contains('_DietObservationCard'));
-    expect(pageCode, contains('_NextStepsCard'));
+    expect(pageCode, contains('MarkdownBody'));
+    expect(pageCode, contains('综合分析报告'));
+    expect(pageCode, contains('生成 AI 分析报告'));
+    expect(pageCode, contains('AI 正在生成...'));
+    expect(pageCode, contains('点击按钮可连接 AI 生成完整分析报告'));
+    expect(pageCode, contains('provider.loadAnalysisCards(force: true)'));
+    expect(pageCode, contains('展开阅读全部'));
+    expect(pageCode, contains('日常基准水平'));
+    expect(pageCode, contains('血糖过山车指数'));
+    expect(pageCode, contains('满血状态时长'));
+    expect(pageCode, contains('AI 生成报告'));
+    expect(pageCode, contains('AI 生活记录报告'));
+    expect(pageCode, contains('基础规则报告'));
+    expect(pageCode, contains('基础生活记录报告'));
+    expect(pageCode, contains('等待 AI'));
+    expect(pageCode, contains('AI 等待超时'));
+    expect(pageCode, contains('friendlyAnalysisReportError'));
+    expect(pageCode, contains('样本不足'));
+    expect(pageCode, contains('很平稳'));
+    expect(pageCode, contains('偏离目标较多'));
+    expect(pageCode, isNot(contains('_DietObservationCard')));
+    expect(pageCode, isNot(contains('_ExerciseAdviceCard')));
+    expect(pageCode, isNot(contains('_NextStepsCard')));
     expect(pageCode, contains('Icons.insights'));
     expect(pageCode, isNot(contains('_TrendChartCard(data: data)')));
     expect(
       pageCode,
       isNot(contains('_FoodSignalsCard(signals: data.foodSignals)')),
+    );
+  });
+
+  test('AI 报告请求失败会显示明确原因', () {
+    expect(
+      friendlyAnalysisReportError(
+        Exception('Function not found: analysis-report'),
+      ),
+      contains('分析服务未部署'),
+    );
+    expect(
+      friendlyAnalysisReportError(Exception('analysis report 请求超时')),
+      contains('AI 等待超时'),
+    );
+    expect(
+      friendlyAnalysisReportError(
+        Exception('analysis_cards_error: missing_llm_config'),
+      ),
+      contains('AI 配置缺失'),
+    );
+    expect(
+      friendlyAnalysisReportError(Exception('llm_http_401')),
+      contains('AI 服务鉴权失败'),
+    );
+    expect(
+      friendlyAnalysisReportError(Exception('llm_http_400: bad model')),
+      contains('AI 请求参数异常'),
+    );
+    expect(
+      friendlyAnalysisReportError(
+        Exception('FunctionException: 500 Internal Server Error'),
+      ),
+      contains('分析服务运行异常'),
     );
   });
 
@@ -897,10 +1012,20 @@ String _readAnalysisMigration() {
   ).readAsStringSync();
 }
 
+String _readAnalysisServiceRoleGrantMigration() {
+  return File(
+    'supabase/migrations/202605060002_grant_analysis_service_role.sql',
+  ).readAsStringSync();
+}
+
 String _readAnalysisFunction() {
   return File('supabase/functions/analysis-report/index.ts').readAsStringSync();
 }
 
 String _readAnalysisPage() {
   return File('lib/pages/analysis_page.dart').readAsStringSync();
+}
+
+String _readHealthProvider() {
+  return File('lib/provider/health_provider.dart').readAsStringSync();
 }

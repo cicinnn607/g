@@ -116,7 +116,228 @@ class FoodCalorieCatalogItem {
       similarityScore: double.tryParse('${row['similarity_score'] ?? 0}') ?? 0,
     );
   }
+
+  FoodCalorieCatalogItem copyNutritionFrom(FoodCalorieCatalogItem source) {
+    return FoodCalorieCatalogItem(
+      id: id,
+      name: name,
+      aliases: aliases,
+      caloriesPer100g: caloriesPer100g,
+      carbsPer100g: source.carbsPer100g,
+      proteinPer100g: source.proteinPer100g,
+      fatPer100g: source.fatPer100g,
+      giValue: source.giValue,
+      servingOptions: source.servingOptions.isEmpty
+          ? servingOptions
+          : source.servingOptions,
+      category: category,
+      source: source.source ?? this.source,
+      isAiGenerated: source.isAiGenerated || isAiGenerated,
+      confidence: source.confidence ?? confidence,
+      similarityScore: similarityScore,
+    );
+  }
 }
+
+class EstimatedFoodResult {
+  final FoodCalorieCatalogItem item;
+
+  const EstimatedFoodResult({required this.item});
+
+  factory EstimatedFoodResult.fromMap(Map<String, dynamic> map) {
+    final rawItem = map['item'];
+    if (rawItem is! Map) {
+      throw StateError('AI 食物估算返回了无法解析的数据');
+    }
+    return EstimatedFoodResult(
+      item: FoodCalorieCatalogItem.fromMap(Map<String, dynamic>.from(rawItem)),
+    );
+  }
+}
+
+FoodCalorieCatalogItem _foodItemFromCustomRow(Map<String, dynamic> row) {
+  return FoodCalorieCatalogItem.fromMap({
+    'id': row['id'],
+    'name': row['name'],
+    'aliases': const [],
+    'calories_per_100g': row['calories_per_100g'],
+    'carbs_per_100g': row['carbs_per_100g'],
+    'protein_per_100g': row['protein_per_100g'],
+    'fat_per_100g': row['fat_per_100g'],
+    'gi_value': row['gi_value'],
+    'serving_options': row['serving_options'] ?? {'100克': 100},
+    'category': row['category'] ?? '自定义',
+    'source': row['source'] ?? 'custom',
+    'is_ai_generated': row['is_ai_generated'],
+    'confidence': row['confidence'],
+    'similarity_score': row['similarity_score'] ?? 1,
+  });
+}
+
+const List<Map<String, dynamic>> _localFoodCatalogRows = [
+  {
+    'id': 'local-rice',
+    'name': '米饭',
+    'aliases': ['白米饭', '蒸米饭', '大米饭'],
+    'calories_per_100g': 116,
+    'serving_options': {'1标准碗': 150, '半碗': 75, '1口': 15},
+    'category': '主食',
+    'source': 'local_seed',
+  },
+  {
+    'id': 'local-egg',
+    'name': '鸡蛋',
+    'aliases': ['水煮蛋', '茶叶蛋', '煎鸡蛋', '煎蛋'],
+    'calories_per_100g': 151,
+    'serving_options': {'1个': 55, '半个': 28, '2个': 110},
+    'category': '蛋白质',
+    'source': 'local_seed',
+  },
+  {
+    'id': 'local-fried-egg',
+    'name': '煎鸡蛋',
+    'aliases': ['煎蛋', '荷包蛋'],
+    'calories_per_100g': 144,
+    'serving_options': {'1个': 55, '半个': 28, '2个': 110},
+    'category': '蛋白质',
+    'source': 'local_seed',
+  },
+  {
+    'id': 'local-milk',
+    'name': '牛奶',
+    'aliases': ['纯牛奶', '全脂牛奶'],
+    'calories_per_100g': 65,
+    'serving_options': {'1盒': 250, '半盒': 125, '1口': 20},
+    'category': '饮品',
+    'source': 'local_seed',
+  },
+  {
+    'id': 'local-latte',
+    'name': '拿铁',
+    'aliases': ['咖啡拿铁', '牛奶咖啡'],
+    'calories_per_100g': 60,
+    'serving_options': {'1杯': 300, '中杯': 360, '1口': 20},
+    'category': '饮品',
+    'source': 'local_seed',
+  },
+  {
+    'id': 'local-bread',
+    'name': '全麦面包',
+    'aliases': ['面包', '吐司', '全麦吐司'],
+    'calories_per_100g': 246,
+    'serving_options': {'1片': 35, '2片': 70, '半片': 18},
+    'category': '主食',
+    'source': 'local_seed',
+  },
+  {
+    'id': 'local-beef',
+    'name': '牛肉',
+    'aliases': ['瘦牛肉', '煎牛排', '牛排'],
+    'calories_per_100g': 125,
+    'serving_options': {'1掌心': 100, '半掌心': 50, '1块': 25},
+    'category': '蛋白质',
+    'source': 'local_seed',
+  },
+  {
+    'id': 'local-chicken-breast',
+    'name': '鸡胸肉',
+    'aliases': ['鸡胸', '鸡肉'],
+    'calories_per_100g': 133,
+    'serving_options': {'1掌心': 100, '半掌心': 50, '1块': 120},
+    'category': '蛋白质',
+    'source': 'local_seed',
+  },
+  {
+    'id': 'local-apple',
+    'name': '苹果',
+    'aliases': ['红苹果', '青苹果'],
+    'calories_per_100g': 53,
+    'serving_options': {'1个': 180, '半个': 90, '1片': 30},
+    'category': '水果',
+    'source': 'local_seed',
+  },
+  {
+    'id': 'local-banana',
+    'name': '香蕉',
+    'aliases': ['蕉'],
+    'calories_per_100g': 93,
+    'serving_options': {'1根': 120, '半根': 60, '1口': 20},
+    'category': '水果',
+    'source': 'local_seed',
+  },
+  {
+    'id': 'local-tomato',
+    'name': '番茄',
+    'aliases': ['西红柿'],
+    'calories_per_100g': 18,
+    'serving_options': {'1个': 180, '半个': 90, '1片': 20},
+    'category': '蔬菜',
+    'source': 'local_seed',
+  },
+  {
+    'id': 'local-cucumber',
+    'name': '黄瓜',
+    'aliases': ['青瓜', '凉拌黄瓜'],
+    'calories_per_100g': 15,
+    'serving_options': {'1根': 200, '半根': 100, '1片': 10},
+    'category': '蔬菜',
+    'source': 'local_seed',
+  },
+  {
+    'id': 'local-tofu',
+    'name': '豆腐',
+    'aliases': ['嫩豆腐', '老豆腐'],
+    'calories_per_100g': 84,
+    'serving_options': {'半盒': 150, '1块': 100, '1口': 20},
+    'category': '豆制品',
+    'source': 'local_seed',
+  },
+  {
+    'id': 'local-noodles',
+    'name': '面条',
+    'aliases': ['汤面', '拌面', '挂面', '拉面'],
+    'calories_per_100g': 110,
+    'serving_options': {'1碗': 250, '半碗': 125, '1口': 25},
+    'category': '主食',
+    'source': 'local_seed',
+  },
+  {
+    'id': 'local-fried-rice',
+    'name': '炒饭',
+    'aliases': ['蛋炒饭'],
+    'calories_per_100g': 188,
+    'serving_options': {'1盘': 300, '半盘': 150, '1勺': 35},
+    'category': '常见菜',
+    'source': 'local_seed',
+  },
+  {
+    'id': 'local-malatang',
+    'name': '麻辣烫',
+    'aliases': ['麻辣烫蔬菜'],
+    'calories_per_100g': 120,
+    'serving_options': {'1碗': 500, '半碗': 250, '1勺': 40},
+    'category': '常见菜',
+    'source': 'local_seed',
+  },
+  {
+    'id': 'local-burger',
+    'name': '汉堡',
+    'aliases': ['牛肉汉堡', '鸡腿堡'],
+    'calories_per_100g': 250,
+    'serving_options': {'1个': 180, '半个': 90, '1口': 25},
+    'category': '快餐',
+    'source': 'local_seed',
+  },
+  {
+    'id': 'local-salad',
+    'name': '鸡胸肉沙拉',
+    'aliases': ['沙拉', '轻食沙拉'],
+    'calories_per_100g': 120,
+    'serving_options': {'1盒': 300, '半盒': 150, '1叉': 25},
+    'category': '轻食',
+    'source': 'local_seed',
+  },
+];
 
 class MealRecognitionItem {
   final String foodNameRaw;
@@ -163,6 +384,23 @@ class MealRecognitionItem {
       isAiGenerated: _parseBool(item['is_ai_generated']),
       catalogId: item['catalog_id'] == null ? null : '${item['catalog_id']}',
       confidence: double.tryParse('${item['confidence'] ?? 0}') ?? 0,
+    );
+  }
+
+  MealRecognitionItem copyFromEstimate(FoodCalorieCatalogItem item) {
+    return MealRecognitionItem(
+      foodNameRaw: foodNameRaw,
+      foodNameConfirmed: item.name,
+      caloriesRaw: item.caloriesPer100g,
+      carbsPer100g: item.carbsPer100g,
+      proteinPer100g: item.proteinPer100g,
+      fatPer100g: item.fatPer100g,
+      giValue: item.giValue,
+      servingOptions: item.servingOptions,
+      source: item.source,
+      isAiGenerated: true,
+      catalogId: item.id.isEmpty ? null : item.id,
+      confidence: item.confidence ?? confidence,
     );
   }
 }
@@ -769,6 +1007,9 @@ class HealthRepository {
           onTimeout: () => throw TimeoutException('analysis-report 请求超时'),
         );
     final data = response.data;
+    if (_isFunctionNotFound(response)) {
+      throw StateError('AI 食物热量功能还没有部署，请先手动填写热量');
+    }
     if (data is Map) {
       final map = Map<String, dynamic>.from(data);
       if (map['error'] != null) {
@@ -801,18 +1042,18 @@ class HealthRepository {
           },
         )
         .timeout(
-          const Duration(seconds: 15),
-          onTimeout: () => throw TimeoutException('analysis cards 请求超时'),
+          const Duration(seconds: 60),
+          onTimeout: () => throw TimeoutException('analysis report 请求超时'),
         );
     final data = response.data;
     if (data is Map) {
       final map = Map<String, dynamic>.from(data);
       if (map['error'] != null) {
-        throw StateError('analysis cards: ${map['error']}');
+        throw StateError('analysis report: ${map['error']}');
       }
       return AnalysisCards.fromMap(map);
     }
-    throw StateError('analysis cards 返回了无法解析的数据');
+    throw StateError('analysis report 返回了无法解析的数据');
   }
 
   Future<List<FoodCalorieCatalogItem>> searchFoodCalorieCatalog(
@@ -820,32 +1061,207 @@ class HealthRepository {
     int limit = 8,
   }) async {
     final client = _client;
-    if (client == null || currentUserId == null || query.trim().isEmpty) {
+    final userId = currentUserId;
+    final normalized = query.trim();
+    if (normalized.isEmpty) {
       return const [];
+    }
+
+    final results = <FoodCalorieCatalogItem>[
+      ..._searchLocalFoodCatalog(normalized, limit: limit),
+    ];
+
+    if (client == null || userId == null) {
+      return _dedupeFoodItems(results, limit);
     }
 
     try {
       final data = await client.rpc(
         'search_food_calorie_catalog',
-        params: {'query_text': query.trim(), 'result_limit': limit},
+        params: {'query_text': normalized, 'result_limit': limit},
       );
-      return _rows(data)
-          .map(FoodCalorieCatalogItem.fromMap)
-          .where((item) => item.name.trim().isNotEmpty)
-          .toList();
+      results.addAll(
+        _rows(data)
+            .map(FoodCalorieCatalogItem.fromMap)
+            .where((item) => item.name.trim().isNotEmpty),
+      );
     } catch (error) {
-      if (isMissingSchemaError(error, table: 'food_calorie_catalog')) {
-        return const [];
-      }
-      final message = '$error'.toLowerCase();
-      if (message.contains('failed host lookup') ||
-          message.contains('socketexception') ||
-          message.contains('network') ||
-          message.contains('connection')) {
-        return const [];
-      }
-      return const [];
+      // Keep search usable even while optional catalog migrations are catching up.
     }
+
+    try {
+      final customRows = _rows(
+        await client
+            .from('custom_foods')
+            .select()
+            .eq('user_id', userId)
+            .ilike('name', '%$normalized%')
+            .order('created_at', ascending: false)
+            .limit(limit),
+      );
+      results.addAll(
+        customRows
+            .map(_foodItemFromCustomRow)
+            .where((item) => item.name.trim().isNotEmpty),
+      );
+    } catch (error) {
+      // Custom foods are additive; search should still return base catalog rows.
+    }
+
+    return _dedupeFoodItems(results, limit);
+  }
+
+  Future<List<FoodCalorieCatalogItem>> getRecentFoods({int limit = 12}) async {
+    final client = _client;
+    final userId = currentUserId;
+    if (client == null || userId == null) {
+      return _localFoodCatalogRows
+          .take(max(1, min(limit, 20)))
+          .map((row) => FoodCalorieCatalogItem.fromMap(row))
+          .toList();
+    }
+
+    final cappedLimit = max(1, min(limit, 20));
+    try {
+      final meals = _rows(
+        await client
+            .from('meals')
+            .select('id, meal_time')
+            .eq('user_id', userId)
+            .order('meal_time', ascending: false)
+            .limit(80),
+      );
+      if (meals.isEmpty) return const [];
+
+      final mealTimes = <String, String>{};
+      for (final meal in meals) {
+        mealTimes['${meal['id'] ?? meal['meal_id']}'] =
+            '${meal['meal_time'] ?? ''}';
+      }
+
+      final items = _rows(
+        await client
+            .from('meal_items')
+            .select('food_name_confirmed, calories_raw, created_at, meal_id')
+            .inFilter('meal_id', mealTimes.keys.toList()),
+      );
+      final stats = <String, Map<String, dynamic>>{};
+
+      for (final item in items) {
+        final name = '${item['food_name_confirmed'] ?? ''}'.trim();
+        final calories = double.tryParse('${item['calories_raw'] ?? ''}') ?? 0;
+        if (name.isEmpty || calories <= 0) continue;
+
+        final key = name.toLowerCase();
+        final time =
+            mealTimes['${item['meal_id']}'] ?? '${item['created_at'] ?? ''}';
+        final existing = stats[key];
+        if (existing == null) {
+          stats[key] = {
+            'id': '',
+            'name': name,
+            'calories_per_100g': calories,
+            'count': 1,
+            'latest': time,
+            'category': '最近常吃',
+            'source': 'recent',
+          };
+        } else {
+          existing['count'] = (existing['count'] as int) + 1;
+          if (time.compareTo('${existing['latest']}') > 0) {
+            existing['latest'] = time;
+            existing['calories_per_100g'] = calories;
+          }
+        }
+      }
+
+      final rows = stats.values.toList()
+        ..sort((a, b) {
+          final byCount = (b['count'] as int).compareTo(a['count'] as int);
+          if (byCount != 0) return byCount;
+          return '${b['latest']}'.compareTo('${a['latest']}');
+        });
+
+      return rows.take(cappedLimit).map(_foodItemFromCustomRow).toList();
+    } catch (error) {
+      if (isMissingSchemaError(error, table: 'meal_items') ||
+          isMissingSchemaError(error, table: 'meals') ||
+          _isNetworkishError(error)) {
+        return const [];
+      }
+      rethrow;
+    }
+  }
+
+  Future<FoodCalorieCatalogItem> createCustomFood({
+    required String name,
+    required double caloriesPer100g,
+    double? carbsPer100g,
+    double? proteinPer100g,
+    double? fatPer100g,
+    double? giValue,
+    Map<String, double> servingOptions = const {},
+    String source = 'custom',
+    bool isAiGenerated = false,
+    double? confidence,
+  }) async {
+    final client = _requireClient();
+    final userId = _requireUserId();
+    final normalized = name.trim();
+    if (normalized.isEmpty) throw StateError('请输入食物名称');
+    if (caloriesPer100g <= 0) throw StateError('请输入有效的每100g热量');
+
+    final row = Map<String, dynamic>.from(
+      await client
+          .from('custom_foods')
+          .upsert({
+            'user_id': userId,
+            'name': normalized,
+            'calories_per_100g': caloriesPer100g,
+            'carbs_per_100g': carbsPer100g,
+            'protein_per_100g': proteinPer100g,
+            'fat_per_100g': fatPer100g,
+            'gi_value': giValue,
+            'serving_options': servingOptions,
+            'source': source,
+            'is_ai_generated': isAiGenerated,
+            'confidence': confidence,
+          }, onConflict: 'user_id,name')
+          .select()
+          .single(),
+    );
+
+    return _foodItemFromCustomRow(row);
+  }
+
+  Future<FoodCalorieCatalogItem> estimateFood(String foodName) async {
+    final client = _requireClient();
+    _requireUserId();
+    final normalized = foodName.trim();
+    if (normalized.isEmpty) throw StateError('请输入食物名称');
+
+    final accessToken = client.auth.currentSession?.accessToken;
+    final response = await client.functions
+        .invoke(
+          'estimate-food',
+          headers: accessToken == null
+              ? null
+              : {'Authorization': 'Bearer $accessToken'},
+          body: {'food_name': normalized},
+        )
+        .timeout(
+          const Duration(seconds: 20),
+          onTimeout: () => throw TimeoutException('AI 食物热量估算请求超时'),
+        );
+    final data = response.data;
+    if (data is Map) {
+      final map = Map<String, dynamic>.from(data);
+      if (map['error'] != null) {
+        throw StateError('AI 食物估算失败：${map['error']}');
+      }
+      return EstimatedFoodResult.fromMap(map).item;
+    }
+    throw StateError('AI 食物估算返回了无法解析的数据');
   }
 
   Future<void> saveProfile({
@@ -1247,6 +1663,73 @@ class HealthRepository {
         .whereType<Map>()
         .map((row) => Map<String, dynamic>.from(row))
         .toList();
+  }
+
+  List<FoodCalorieCatalogItem> _searchLocalFoodCatalog(
+    String query, {
+    required int limit,
+  }) {
+    final normalized = query.trim().toLowerCase();
+    if (normalized.isEmpty) return const [];
+    final scored = <({FoodCalorieCatalogItem item, int score})>[];
+    for (final row in _localFoodCatalogRows) {
+      final item = FoodCalorieCatalogItem.fromMap(row);
+      final names = [item.name, ...item.aliases]
+          .map((value) => value.trim().toLowerCase())
+          .where((value) => value.isNotEmpty)
+          .toList();
+      var score = 0;
+      for (final name in names) {
+        if (name == normalized) {
+          score = max(score, 100);
+        } else if (name.contains(normalized)) {
+          score = max(score, 80);
+        } else if (normalized.contains(name)) {
+          score = max(score, 65);
+        }
+      }
+      if (score > 0) scored.add((item: item, score: score));
+    }
+    scored.sort((a, b) {
+      final byScore = b.score.compareTo(a.score);
+      if (byScore != 0) return byScore;
+      return a.item.name.length.compareTo(b.item.name.length);
+    });
+    return scored
+        .take(max(1, min(limit, 20)))
+        .map((entry) => entry.item)
+        .toList();
+  }
+
+  List<FoodCalorieCatalogItem> _dedupeFoodItems(
+    List<FoodCalorieCatalogItem> items,
+    int limit,
+  ) {
+    final seen = <String>{};
+    final merged = <FoodCalorieCatalogItem>[];
+    for (final item in items) {
+      final key = item.name.trim().toLowerCase();
+      if (key.isEmpty || seen.contains(key)) continue;
+      seen.add(key);
+      merged.add(item);
+    }
+    return merged.take(max(1, min(limit, 20))).toList();
+  }
+
+  bool _isNetworkishError(Object error) {
+    final message = '$error'.toLowerCase();
+    return message.contains('failed host lookup') ||
+        message.contains('socketexception') ||
+        message.contains('network') ||
+        message.contains('connection');
+  }
+
+  bool _isFunctionNotFound(FunctionResponse response) {
+    final data = response.data;
+    final text = '$data'.toLowerCase();
+    return response.status == 404 ||
+        text.contains('not_found') ||
+        text.contains('requested function was not found');
   }
 
   static String formatMealServingSummary(List<Map<String, dynamic>> items) {

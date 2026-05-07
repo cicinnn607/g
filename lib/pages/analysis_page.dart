@@ -1,8 +1,10 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:provider/provider.dart';
 
+import '../core/app_messages.dart';
 import '../core/app_style.dart';
 import '../provider/health_provider.dart';
 import '../services/analysis_report.dart';
@@ -36,13 +38,12 @@ class _DataAnalysisPageState extends State<DataAnalysisPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
-      appBar: AppBar(title: const Text('数据分析')),
+      appBar: AppBar(title: const Text('分析报告')),
       body: Consumer<HealthProvider>(
         builder: (context, provider, _) {
           return RefreshIndicator(
             onRefresh: () async {
               await provider.loadAnalysisReport();
-              await provider.loadAnalysisCards(force: true);
             },
             child: CustomScrollView(
               physics: const AlwaysScrollableScrollPhysics(),
@@ -82,7 +83,9 @@ class _DataAnalysisPageState extends State<DataAnalysisPage> {
   bool _shouldShowEmptyState(HealthProvider provider) {
     if (provider.analysisReport.hasRemoteData) return false;
     return provider.glucoseHistory.isEmpty &&
+        provider.mealHistory.isEmpty &&
         provider.mealItems.isEmpty &&
+        provider.exerciseHistory.isEmpty &&
         provider.statusHistory.isEmpty;
   }
 }
@@ -145,11 +148,11 @@ class _AnalysisCardStack extends StatelessWidget {
         const SizedBox(height: 16),
         _MetricsCard(data: data),
         const SizedBox(height: 16),
-        _DietObservationCard(provider: provider, isCgmMode: isCgmMode),
-        const SizedBox(height: 16),
-        _ExerciseAdviceCard(provider: provider),
-        const SizedBox(height: 16),
-        _NextStepsCard(provider: provider),
+        _ComprehensiveReportCard(
+          provider: provider,
+          data: data,
+          isCgmMode: isCgmMode,
+        ),
       ],
     );
   }
@@ -162,7 +165,7 @@ class _MetricsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final rangeLabel = data.isCgmMode ? 'TIR' : '目标范围内记录占比';
+    final rangeLabel = data.isCgmMode ? 'TIR' : '达标占比';
     return SoftCard(
       title: '核心指标',
       child: Row(
@@ -174,6 +177,8 @@ class _MetricsCard extends StatelessWidget {
                   ? '--'
                   : data.avgGlucose!.toStringAsFixed(1),
               unit: 'mmol/L',
+              helper: '日常基准水平',
+              tier: _avgTier(data.avgGlucose),
               color: AppColors.primary,
             ),
           ),
@@ -183,6 +188,8 @@ class _MetricsCard extends StatelessWidget {
               label: '变异系数',
               value: data.cv == null ? '--' : data.cv!.toStringAsFixed(1),
               unit: data.cv == null ? '数据不足' : '%',
+              helper: '血糖过山车指数',
+              tier: _cvTier(data.cv),
               color: data.cv == null ? AppColors.yellow : _cvColor(data.cv),
             ),
           ),
@@ -194,6 +201,8 @@ class _MetricsCard extends StatelessWidget {
                   ? '--'
                   : (data.inRangeRatio! * 100).toStringAsFixed(0),
               unit: data.inRangeRatio == null ? '' : '%',
+              helper: '满血状态时长',
+              tier: _rangeTier(data.inRangeRatio),
               color: AppColors.green,
             ),
           ),
@@ -208,18 +217,45 @@ class _MetricsCard extends StatelessWidget {
         ? AppColors.green
         : AppColors.red;
   }
+
+  String _avgTier(double? value) {
+    if (value == null) return '样本不足';
+    if (value < AnalysisService.glucoseLowTarget) return '偏低，留意低值时段';
+    if (value <= 7.8) return '整体较稳';
+    if (value <= AnalysisService.glucoseHighTarget) return '略高，继续观察';
+    return '偏高，关注餐后记录';
+  }
+
+  String _cvTier(double? value) {
+    if (value == null) return '样本不足';
+    if (value < 20) return '很平稳';
+    if (value < AnalysisService.glucoseCvStableThreshold) return '有波动，可接受';
+    return '波动明显';
+  }
+
+  String _rangeTier(double? value) {
+    if (value == null) return '样本不足';
+    final percent = value * 100;
+    if (percent >= 90) return '大部分时间稳定';
+    if (percent >= 70) return '总体还可以';
+    return '偏离目标较多';
+  }
 }
 
 class _MetricCell extends StatelessWidget {
   final String label;
   final String value;
   final String unit;
+  final String helper;
+  final String tier;
   final Color color;
 
   const _MetricCell({
     required this.label,
     required this.value,
     required this.unit,
+    required this.helper,
+    required this.tier,
     required this.color,
   });
 
@@ -258,6 +294,23 @@ class _MetricCell extends StatelessWidget {
                   if (unit.isNotEmpty)
                     TextSpan(text: ' $unit', style: AppTextStyles.caption),
                 ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '💡 $helper',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: AppTextStyles.caption.copyWith(color: AppColors.text),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              tier,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: AppTextStyles.caption.copyWith(
+                color: color,
+                fontWeight: FontWeight.w800,
               ),
             ),
           ],
@@ -338,12 +391,12 @@ class _WeeklyFocusCard extends StatelessWidget {
           ),
           if (provider.isLoadingAnalysisCards) ...[
             const SizedBox(height: 12),
-            const _InlineLoading(text: '正在生成 AI 分析卡片'),
+            const _InlineLoading(text: '正在生成 AI 分析报告'),
           ],
           if (provider.analysisCardsError != null) ...[
             const SizedBox(height: 12),
             const Text(
-              '当前为基础分析，下拉刷新可重新生成 AI 卡片。',
+              '当前为基础分析，可点击下方按钮重新生成 AI 报告。',
               style: AppTextStyles.caption,
             ),
           ],
@@ -373,330 +426,249 @@ class _WeeklyFocusCard extends StatelessWidget {
   }
 }
 
-class _DietObservationCard extends StatelessWidget {
+class _ComprehensiveReportCard extends StatelessWidget {
   final HealthProvider provider;
   final bool isCgmMode;
+  final _AnalysisDisplayData data;
 
-  const _DietObservationCard({required this.provider, required this.isCgmMode});
+  const _ComprehensiveReportCard({
+    required this.provider,
+    required this.data,
+    required this.isCgmMode,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final cards = provider.analysisCards.isLlm
-        ? provider.analysisCards.dietCards
-        : _fallbackDietCards(provider, isCgmMode);
+    final markdown = isCgmMode
+        ? _buildCgmReportMarkdown(provider)
+        : _manualReportMarkdown(provider, data);
+    final source = _reportSource(provider);
+    final sourceColor = _reportSourceColor(source);
     return SoftCard(
-      title: '饮食观察',
+      title: '综合分析报告',
+      trailing: _StatusChip(text: source, color: sourceColor),
       child: Column(
-        children: List.generate(cards.length, (index) {
-          final card = cards[index];
-          return Padding(
-            padding: EdgeInsets.only(
-              bottom: index == cards.length - 1 ? 0 : 10,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (!isCgmMode) ...[
+            _GenerateAiReportButton(provider: provider),
+            const SizedBox(height: 12),
+            if (!_hasRequestedAi(provider)) ...[
+              const _ReportNotice(text: '当前显示基础规则报告。点击按钮可连接 AI 生成完整分析报告。'),
+              const SizedBox(height: 12),
+            ],
+          ],
+          if (!isCgmMode && provider.isLoadingAnalysisCards)
+            const _ReportLoading()
+          else ...[
+            MarkdownBody(
+              data: markdown,
+              selectable: false,
+              styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context))
+                  .copyWith(
+                    h3: AppTextStyles.section.copyWith(
+                      fontSize: 16,
+                      height: 1.35,
+                    ),
+                    p: AppTextStyles.body.copyWith(height: 1.6),
+                    listBullet: AppTextStyles.body,
+                    strong: AppTextStyles.body.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
             ),
-            child: _DietObservationTile(card: card),
-          );
-        }),
+            if (!isCgmMode && provider.analysisCards.error != null) ...[
+              const SizedBox(height: 12),
+              _ReportNotice(
+                text: _reportErrorLabel(provider.analysisCards.error),
+              ),
+            ],
+            if (!isCgmMode && provider.analysisCardsError != null) ...[
+              const SizedBox(height: 12),
+              _ReportNotice(
+                text: friendlyAnalysisReportError(provider.analysisCardsError!),
+              ),
+            ],
+            const SizedBox(height: 14),
+            Text(
+              provider.analysisCards.safetyNote,
+              style: AppTextStyles.caption,
+            ),
+          ],
+        ],
       ),
     );
   }
 
-  List<AnalysisDietCard> _fallbackDietCards(
+  String _reportSource(HealthProvider provider) {
+    if (isCgmMode) return 'CGM 预留';
+    if (provider.isLoadingAnalysisCards) return '等待 AI';
+    if (provider.analysisCards.isLifestyleNoGlucose) {
+      if (provider.analysisCards.isLlm && provider.analysisCardsError == null) {
+        return 'AI 生活记录报告';
+      }
+      return '基础生活记录报告';
+    }
+    if (provider.analysisCards.isLlm && provider.analysisCardsError == null) {
+      return 'AI 生成报告';
+    }
+    return '基础规则报告';
+  }
+
+  Color _reportSourceColor(String source) {
+    if (source == 'AI 生成报告' || source == 'AI 生活记录报告') {
+      return AppColors.lavender;
+    }
+    if (source == '等待 AI') return AppColors.primary;
+    if (source == 'CGM 预留') return AppColors.green;
+    return AppColors.yellow;
+  }
+
+  String _reportErrorLabel(String? error) {
+    switch (error) {
+      case 'missing_llm_config':
+        return 'AI 配置缺失，当前显示基础规则报告。';
+      case 'insufficient_data':
+        return '可用于 AI 报告的数据不足，当前显示基础规则报告。';
+      case 'llm_timeout':
+        return 'AI 等待超时，当前显示基础规则报告。';
+      case 'invalid_analysis_report':
+        return 'AI 输出未通过安全校验，当前显示基础规则报告。';
+      case 'llm_exception':
+        return 'AI 生成异常，当前显示基础规则报告。';
+      default:
+        if (error != null && error.startsWith('llm_http_400')) {
+          return 'AI 请求参数异常，当前显示基础规则报告。技术信息：$error';
+        }
+        if (error != null &&
+            (error.startsWith('llm_http_401') ||
+                error.startsWith('llm_http_403'))) {
+          return 'AI 服务鉴权失败，当前显示基础规则报告。技术信息：$error';
+        }
+        if (error != null && error.startsWith('llm_http_429')) {
+          return 'AI 服务额度或频率受限，当前显示基础规则报告。技术信息：$error';
+        }
+        if (error != null && error.startsWith('llm_http_')) {
+          return 'AI 服务返回异常，当前显示基础规则报告。技术信息：$error';
+        }
+        return '当前显示基础规则报告。';
+    }
+  }
+
+  String _manualReportMarkdown(
     HealthProvider provider,
-    bool isCgmMode,
+    _AnalysisDisplayData data,
   ) {
-    if (isCgmMode) {
-      final count = provider.glucoseHistory
-          .where((record) => '${record['source']}' == 'cgm')
-          .length;
-      return [
-        AnalysisDietCard(
-          title: count > 0 ? 'CGM 演示观察' : 'CGM 预留入口',
-          signal: 'observe',
-          evidence: count > 0 ? '当前有 $count 条 CGM 记录' : '当前还没有连续血糖记录',
-          suggestion: '可结合餐次查看峰值、回落和目标范围内时间。',
-          nextRecord: '演示账号可预置 CGM 数据',
-        ),
-      ];
+    final cards = provider.analysisCards;
+    if (provider.analysisCardsError == null &&
+        cards.reportMarkdown.trim().isNotEmpty) {
+      return cards.reportMarkdown;
     }
-    final signals = provider.analysisReport.foodSignals;
-    if (signals.isNotEmpty) {
-      return signals.take(3).map((signal) {
-        final avg = signal.avgExcursion == null
-            ? '暂无足量升幅样本'
-            : '平均餐后升幅 ${signal.avgExcursion!.toStringAsFixed(1)} mmol/L';
-        return AnalysisDietCard(
-          title: signal.foodName,
-          signal: signal.signalLevel,
-          evidence: '参与 ${signal.mealCount} 餐，$avg',
-          suggestion: signal.reason.isEmpty ? '先保持观察，继续配对记录。' : signal.reason,
-          nextRecord: '下次补餐后2小时血糖',
-        );
-      }).toList();
-    }
-    final localSignals = provider.foodSignals.take(3).map((signal) {
-      return AnalysisDietCard(
-        title: signal.name,
-        signal: signal.level,
-        evidence: '基于当前饮食、血糖和状态记录观察',
-        suggestion: signal.reason,
-        nextRecord: '继续补餐后血糖和状态',
-      );
-    }).toList();
-    return localSignals.isEmpty
-        ? const [
-            AnalysisDietCard(
-              title: '饮食观察',
-              signal: 'observe',
-              evidence: '样本还少，暂时看不出稳定规律。',
-              suggestion: '先选择一餐固定记录餐后血糖和状态。',
-              nextRecord: '餐后2小时补血糖',
-            ),
-          ]
-        : localSignals;
+    return _buildManualReportMarkdown(provider, data);
+  }
+
+  bool _hasRequestedAi(HealthProvider provider) {
+    return provider.analysisCards != AnalysisCards.empty ||
+        provider.analysisCardsError != null ||
+        provider.isLoadingAnalysisCards;
   }
 }
 
-class _DietObservationTile extends StatelessWidget {
-  final AnalysisDietCard card;
+class _GenerateAiReportButton extends StatelessWidget {
+  final HealthProvider provider;
 
-  const _DietObservationTile({required this.card});
+  const _GenerateAiReportButton({required this.provider});
 
   @override
   Widget build(BuildContext context) {
-    final color = _signalColor(card.signal);
+    final isLoading = provider.isLoadingAnalysisCards;
+    final hasAiReport =
+        provider.analysisCards.isLlm && provider.analysisCardsError == null;
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton.icon(
+        onPressed: isLoading
+            ? null
+            : () => provider.loadAnalysisCards(force: true),
+        icon: isLoading
+            ? const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : Icon(hasAiReport ? Icons.refresh : Icons.auto_awesome),
+        label: Text(
+          isLoading
+              ? 'AI 正在生成...'
+              : hasAiReport
+              ? '重新生成 AI 分析报告'
+              : '生成 AI 分析报告',
+        ),
+        style: AppButtonStyles.primary,
+      ),
+    );
+  }
+}
+
+class _ReportLoading extends StatelessWidget {
+  const _ReportLoading();
+
+  @override
+  Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.08),
+        color: AppColors.primarySoft,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withValues(alpha: 0.18)),
+        border: Border.all(color: AppColors.primary.withValues(alpha: 0.16)),
       ),
       child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        padding: const EdgeInsets.all(14),
+        child: Row(
           children: [
-            Row(
-              children: [
-                Container(
-                  width: 10,
-                  height: 10,
-                  decoration: BoxDecoration(
-                    color: color,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    card.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w800,
-                      color: AppColors.text,
-                    ),
-                  ),
-                ),
-                _StatusChip(text: _signalLabel(card.signal), color: color),
-              ],
+            const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2.4),
             ),
-            const SizedBox(height: 10),
-            _LabelText(label: '证据', text: card.evidence),
-            const SizedBox(height: 8),
-            _LabelText(label: '建议', text: card.suggestion),
-            const SizedBox(height: 8),
-            _LabelText(label: '下次补', text: card.nextRecord),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                '正在生成 AI 分析报告，会尽量多等一会儿，不提前用规则报告顶替。',
+                style: AppTextStyles.body.copyWith(
+                  color: AppColors.primaryDark,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
           ],
         ),
       ),
     );
   }
-
-  Color _signalColor(String signal) {
-    if (signal == 'red') return AppColors.red;
-    if (signal == 'yellow') return AppColors.yellow;
-    if (signal == 'green') return AppColors.green;
-    return AppColors.lavender;
-  }
-
-  String _signalLabel(String signal) {
-    if (signal == 'red') return '红灯';
-    if (signal == 'yellow') return '黄灯';
-    if (signal == 'green') return '绿灯';
-    return '观察';
-  }
 }
 
-class _ExerciseAdviceCard extends StatelessWidget {
-  final HealthProvider provider;
-
-  const _ExerciseAdviceCard({required this.provider});
-
-  @override
-  Widget build(BuildContext context) {
-    final card = provider.analysisCards.isLlm
-        ? provider.analysisCards.exerciseCard
-        : _fallbackExerciseCard(provider);
-    return SoftCard(
-      title: '运动建议',
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: AppColors.lavenderSoft,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: AppColors.line),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const Icon(
-                    Icons.directions_walk,
-                    size: 20,
-                    color: AppColors.lavender,
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(card.title, style: AppTextStyles.section),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              _LabelText(label: '证据', text: card.evidence),
-              const SizedBox(height: 8),
-              _LabelText(label: '建议', text: card.suggestion),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  AnalysisExerciseCard _fallbackExerciseCard(HealthProvider provider) {
-    final minutes = provider.exerciseHistory.fold<int>(0, (sum, item) {
-      return sum + (int.tryParse('${item['duration']}') ?? 0);
-    });
-    return AnalysisExerciseCard(
-      title: minutes > 0 ? '继续轻运动' : '饭后轻动',
-      evidence: minutes > 0 ? '本周已记录运动约 $minutes 分钟' : '本周运动记录偏少',
-      suggestion: provider.exerciseSuggestion,
-    );
-  }
-}
-
-class _NextStepsCard extends StatelessWidget {
-  final HealthProvider provider;
-
-  const _NextStepsCard({required this.provider});
-
-  @override
-  Widget build(BuildContext context) {
-    final steps = provider.analysisCards.isLlm
-        ? provider.analysisCards.nextSteps
-        : _fallbackNextSteps(provider);
-    return SoftCard(
-      title: '下一步补记录',
-      child: Column(
-        children: [
-          ...List.generate(steps.length, (index) {
-            final step = steps[index];
-            return Padding(
-              padding: EdgeInsets.only(
-                bottom: index == steps.length - 1 ? 0 : 10,
-              ),
-              child: _NextStepTile(step: step),
-            );
-          }),
-          const SizedBox(height: 14),
-          Text(provider.analysisCards.safetyNote, style: AppTextStyles.caption),
-        ],
-      ),
-    );
-  }
-
-  List<AnalysisNextStep> _fallbackNextSteps(HealthProvider provider) {
-    final steps = <AnalysisNextStep>[];
-    if (provider.glucoseHistory.length < 4 || provider.mealHistory.isNotEmpty) {
-      steps.add(const AnalysisNextStep(type: 'glucose', task: '餐后2小时补血糖'));
-    }
-    if (provider.statusHistory.length < provider.mealHistory.length) {
-      steps.add(const AnalysisNextStep(type: 'status', task: '餐后犯困时记状态'));
-    }
-    if (provider.exerciseHistory.isEmpty) {
-      steps.add(const AnalysisNextStep(type: 'exercise', task: '饭后轻走后记运动'));
-    }
-    if (steps.isEmpty) {
-      steps.add(const AnalysisNextStep(type: 'diet', task: '继续记录下一餐搭配'));
-    }
-    return steps.take(4).toList();
-  }
-}
-
-class _NextStepTile extends StatelessWidget {
-  final AnalysisNextStep step;
-
-  const _NextStepTile({required this.step});
-
-  @override
-  Widget build(BuildContext context) {
-    final color = _typeColor(step.type);
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          width: 26,
-          height: 26,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.1),
-            shape: BoxShape.circle,
-          ),
-          child: Icon(_typeIcon(step.type), color: color, size: 16),
-        ),
-        const SizedBox(width: 10),
-        Expanded(child: Text(step.task, style: AppTextStyles.body)),
-      ],
-    );
-  }
-
-  Color _typeColor(String type) {
-    if (type == 'glucose') return AppColors.primary;
-    if (type == 'exercise') return AppColors.lavender;
-    if (type == 'status') return AppColors.yellow;
-    return AppColors.green;
-  }
-
-  IconData _typeIcon(String type) {
-    if (type == 'glucose') return Icons.water_drop;
-    if (type == 'exercise') return Icons.directions_walk;
-    if (type == 'status') return Icons.mood;
-    return Icons.restaurant;
-  }
-}
-
-class _LabelText extends StatelessWidget {
-  final String label;
+class _ReportNotice extends StatelessWidget {
   final String text;
 
-  const _LabelText({required this.label, required this.text});
+  const _ReportNotice({required this.text});
 
   @override
   Widget build(BuildContext context) {
-    return RichText(
-      text: TextSpan(
-        text: '$label：',
-        style: AppTextStyles.caption.copyWith(
-          color: AppColors.muted,
-          fontWeight: FontWeight.w700,
-        ),
-        children: [
-          TextSpan(
-            text: text,
-            style: AppTextStyles.body.copyWith(fontWeight: FontWeight.w400),
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: AppColors.yellowSoft,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.yellow.withValues(alpha: 0.18)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Text(
+          text,
+          style: AppTextStyles.caption.copyWith(
+            color: AppColors.text,
+            fontWeight: FontWeight.w700,
           ),
-        ],
+        ),
       ),
     );
   }
@@ -782,7 +754,7 @@ class _ExpandableTextState extends State<_ExpandableText> {
               padding: const EdgeInsets.only(top: 4),
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
-            child: Text(_expanded ? '收起' : '展开'),
+            child: Text(_expanded ? '收起' : '展开阅读全部 🔽'),
           ),
       ],
     );
@@ -954,20 +926,14 @@ class _AnalysisDisplayData {
   final double? avgGlucose;
   final double? cv;
   final double? inRangeRatio;
-  final List<_EnergyItem> energyItems;
   final String summaryText;
-  final String summarySource;
-  final List<String> qualityMessages;
 
   const _AnalysisDisplayData({
     required this.isCgmMode,
     required this.avgGlucose,
     required this.cv,
     required this.inRangeRatio,
-    required this.energyItems,
     required this.summaryText,
-    required this.summarySource,
-    required this.qualityMessages,
   });
 
   factory _AnalysisDisplayData.fromManual(HealthProvider provider) {
@@ -979,29 +945,17 @@ class _AnalysisDisplayData {
         avgGlucose: report.weeklySummaryMetrics.avgGlucose,
         cv: report.weeklySummaryMetrics.cv,
         inRangeRatio: report.weeklySummaryMetrics.inRangeRatio,
-        energyItems: report.energyCorrelation.map(_EnergyItem.remote).toList(),
         summaryText: report.summaryText,
-        summarySource: report.summarySource,
-        qualityMessages: report.dataQuality.messages,
       );
     }
 
     final local = _LocalGlucoseStats.fromRecords(provider.glucoseHistory);
-    final insight = provider.manualInsight;
     return _AnalysisDisplayData(
       isCgmMode: false,
       avgGlucose: local.avgGlucose,
       cv: local.cv,
       inRangeRatio: local.inRangeRatio,
-      energyItems: [
-        _EnergyItem(
-          text: '观察到的相关性：${insight.possibleCause}',
-          scoreText: provider.statusHistory.isEmpty ? null : '已记录状态',
-        ),
-      ],
       summaryText: _buildLocalSummaryText(local, provider.statusHistory),
-      summarySource: 'local',
-      qualityMessages: const ['继续记录后，这里会给出更准确的趋势分析。'],
     );
   }
 
@@ -1015,18 +969,9 @@ class _AnalysisDisplayData {
       avgGlucose: local.avgGlucose,
       cv: local.cv,
       inRangeRatio: local.inRangeRatio,
-      energyItems: [
-        _EnergyItem(
-          text: cgmRecords.isEmpty
-              ? '观察到的相关性：CGM 视图是预留能力，接入连续血糖后再比较波动和精力。'
-              : '观察到的相关性：当前 CGM 记录可先用于查看日内波动，暂不直接推断原因。',
-        ),
-      ],
       summaryText: cgmRecords.isEmpty
           ? 'CGM 分析会重点查看连续波动、TIR、夜间偏低和餐后回落速度；当前版本先保留扩展入口。'
           : '当前有 ${cgmRecords.length} 条 CGM 记录，可先观察目标范围内时间和波动幅度，具体建议仍需结合饮食、运动和状态记录。',
-      summarySource: 'template',
-      qualityMessages: const ['CGM 指标只在连续血糖数据充足时使用。'],
     );
   }
 }
@@ -1099,22 +1044,6 @@ class _LocalGlucoseReading {
   }
 }
 
-class _EnergyItem {
-  final String text;
-  final String? scoreText;
-
-  const _EnergyItem({required this.text, this.scoreText});
-
-  factory _EnergyItem.remote(EnergyCorrelationItem item) {
-    return _EnergyItem(
-      text: '观察到的相关性：${item.insight}',
-      scoreText: item.avgEnergy == null
-          ? '${item.dayCount} 天'
-          : '${item.avgEnergy!.toStringAsFixed(1)} / 5',
-    );
-  }
-}
-
 String _buildLocalSummaryText(
   _LocalGlucoseStats stats,
   List<Map<String, dynamic>> statusHistory,
@@ -1136,6 +1065,87 @@ String _buildLocalSummaryText(
       ? ''
       : '最近状态记录显示${statusHistory.first['status_level']}，';
   return '近期血糖主要在 ${min.toStringAsFixed(1)}-${max.toStringAsFixed(1)} mmol/L 之间，最新记录为 ${latest.toStringAsFixed(1)}，整体表现$stability。$statusText请继续给容易犯困或饥饿的餐次打标签，这样能帮您发现更多饮食规律哦。';
+}
+
+String _buildManualReportMarkdown(
+  HealthProvider provider,
+  _AnalysisDisplayData data,
+) {
+  final glucoseCount = provider.glucoseHistory.length;
+  final mealCount = provider.mealHistory.length;
+  final exerciseMinutes = provider.exerciseHistory.fold<int>(0, (sum, item) {
+    return sum + (int.tryParse('${item['duration']}') ?? 0);
+  });
+  final statusCount = provider.statusHistory.length;
+  final foodSignals = provider.analysisReport.foodSignals.isNotEmpty
+      ? provider.analysisReport.foodSignals
+            .take(2)
+            .map((item) => item.foodName)
+            .join('、')
+      : provider.foodSignals.take(2).map((item) => item.name).join('、');
+  final avgText = data.avgGlucose == null
+      ? '平均血糖还需要更多记录来判断'
+      : '平均血糖约 ${data.avgGlucose!.toStringAsFixed(1)} mmol/L';
+  final rangeText = data.inRangeRatio == null
+      ? '达标占比还需要继续观察'
+      : '达标占比约 ${(data.inRangeRatio! * 100).toStringAsFixed(0)}%';
+  final cvText = data.cv == null
+      ? '波动程度暂时样本不足'
+      : '血糖过山车指数约 ${data.cv!.toStringAsFixed(1)}%';
+  final foodText = foodSignals.isEmpty
+      ? '目前饮食样本还少，暂时不对某个食物下结论。先固定记录一类早餐或午餐，更容易看出它和精力之间的关系。'
+      : '目前可以优先观察 $foodSignals 这些记录较多的餐食，结合餐后血糖和状态备注判断它们是否让你更犯困或更稳定。';
+  final exerciseText = exerciseMinutes > 0
+      ? '本周已经记录运动约 $exerciseMinutes 分钟，可以继续观察饭后轻走、快走或其他运动后，餐后状态是否更平稳。'
+      : '本周运动记录还少，先从饭后轻走 10 分钟开始，比一上来安排高强度运动更容易坚持。';
+
+  return '''
+### 🌟 本周整体概览
+本周已有 $glucoseCount 条血糖、$mealCount 餐饮食、$statusCount 条状态记录。$avgText，$cvText，$rangeText。整体报告先以趋势观察为主，继续补齐配对记录后会更准确。
+
+### 🥗 饮食与精力追踪
+$foodText
+
+### 🏃‍♂️ 运动与代谢反馈
+$exerciseText
+
+### 💡 下一步微量改变
+下周先选一个最容易做到的小动作：给一餐补上餐后 2 小时血糖，再写一句当时的精力状态，比如“犯困”“饥饿感强”或“状态稳定”。
+''';
+}
+
+String _buildCgmReportMarkdown(HealthProvider provider) {
+  final count = provider.glucoseHistory
+      .where((record) => '${record['source']}' == 'cgm')
+      .length;
+  if (count == 0) {
+    return '''
+### 🌟 本周整体概览
+CGM 是连续血糖分析的预留入口，当前还没有连续血糖记录。
+
+### 🥗 饮食与精力追踪
+接入 CGM 后，这里会结合餐次查看峰值、回落速度和精力状态变化。
+
+### 🏃‍♂️ 运动与代谢反馈
+接入连续数据后，可以观察饭后轻运动是否让餐后波动更平缓。
+
+### 💡 下一步微量改变
+当前版本先继续使用手动记录；如果后续接入 CGM，再把连续曲线和餐食、运动、状态一起分析。
+''';
+  }
+  return '''
+### 🌟 本周整体概览
+当前有 $count 条 CGM 记录，可先观察日内波动、目标范围内时间和夜间偏低情况。
+
+### 🥗 饮食与精力追踪
+CGM 数据需要和餐食时间配对，才能更清楚地看到某一餐后的峰值和回落节奏。
+
+### 🏃‍♂️ 运动与代谢反馈
+饭后轻运动如果记录完整，后续可以和连续曲线对照，看波动是否更平缓。
+
+### 💡 下一步微量改变
+继续补齐餐食、运动和状态记录，让 CGM 曲线不只是数字，而能对应到真实生活行为。
+''';
 }
 
 double? _normalizeGlucose(Object? value, Object? unit) {

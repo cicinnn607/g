@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
 import '../services/analysis_service.dart';
@@ -155,7 +153,6 @@ class HealthProvider with ChangeNotifier {
         endDate: end,
         timezone: 'Asia/Shanghai',
       );
-      unawaited(loadAnalysisCards(startDate: start, endDate: end));
     } catch (error) {
       analysisError = '$error';
       debugPrint('分析报告加载失败: $error');
@@ -207,12 +204,88 @@ class HealthProvider with ChangeNotifier {
       _analysisCardsCacheKey = localCacheKey;
     } catch (error) {
       analysisCardsError = '$error';
-      debugPrint('AI 分析卡片加载失败: $error');
+      debugPrint('AI 分析报告加载失败: $error');
       _analysisCards = AnalysisCards.empty;
       _analysisCardsCacheKey = localCacheKey;
     } finally {
       isAnalysisCardsLoading = false;
       notifyListeners();
+    }
+  }
+
+  Future<List<FoodCalorieCatalogItem>> getRecentFoods({int limit = 12}) {
+    return repository.getRecentFoods(limit: limit);
+  }
+
+  Future<List<FoodCalorieCatalogItem>> searchFoodCalorieCatalog(
+    String query, {
+    int limit = 8,
+  }) {
+    return repository.searchFoodCalorieCatalog(query, limit: limit);
+  }
+
+  Future<FoodCalorieCatalogItem> createCustomFood({
+    required String name,
+    required double caloriesPer100g,
+    double? carbsPer100g,
+    double? proteinPer100g,
+    double? fatPer100g,
+    double? giValue,
+    Map<String, double> servingOptions = const {},
+    String source = 'custom',
+    bool isAiGenerated = false,
+    double? confidence,
+  }) {
+    return repository.createCustomFood(
+      name: name,
+      caloriesPer100g: caloriesPer100g,
+      carbsPer100g: carbsPer100g,
+      proteinPer100g: proteinPer100g,
+      fatPer100g: fatPer100g,
+      giValue: giValue,
+      servingOptions: servingOptions,
+      source: source,
+      isAiGenerated: isAiGenerated,
+      confidence: confidence,
+    );
+  }
+
+  Future<FoodCalorieCatalogItem> estimateFood(String foodName) {
+    return repository.estimateFood(foodName);
+  }
+
+  Future<void> sinkRecognizedFoods(List<MealRecognitionItem> items) async {
+    for (final item in items) {
+      final name = (item.foodNameConfirmed ?? item.foodNameRaw).trim();
+      if (item.catalogId != null || name.isEmpty || item.caloriesRaw <= 0) {
+        continue;
+      }
+
+      try {
+        final matches = await repository.searchFoodCalorieCatalog(
+          name,
+          limit: 3,
+        );
+        final exists = matches.any(
+          (match) => match.name.trim().toLowerCase() == name.toLowerCase(),
+        );
+        if (!exists) {
+          await repository.createCustomFood(
+            name: name,
+            caloriesPer100g: item.caloriesRaw,
+            carbsPer100g: item.carbsPer100g,
+            proteinPer100g: item.proteinPer100g,
+            fatPer100g: item.fatPer100g,
+            giValue: item.giValue,
+            servingOptions: item.servingOptions,
+            source: item.source ?? 'recognition',
+            isAiGenerated: item.isAiGenerated,
+            confidence: item.confidence > 0 ? item.confidence : null,
+          );
+        }
+      } catch (error) {
+        debugPrint('AI 食物沉淀失败: $error');
+      }
     }
   }
 

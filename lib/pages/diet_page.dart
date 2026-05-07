@@ -55,7 +55,8 @@ class _DietRecordPageState extends State<DietRecordPage> {
   }
 
   Future<void> _pickImage(ImageSource source) async {
-    final repository = context.read<HealthProvider>().repository;
+    final provider = context.read<HealthProvider>();
+    final repository = provider.repository;
     final picked = await _picker.pickImage(
       source: source,
       imageQuality: 82,
@@ -79,6 +80,10 @@ class _DietRecordPageState extends State<DietRecordPage> {
           imageUrl: result.storagePath,
         );
         if (selected != null) {
+          final sourceItem = selected.sourceItem;
+          if (sourceItem != null) {
+            await provider.sinkRecognizedFoods([sourceItem]);
+          }
           _replaceDrafts([selected]);
         }
       }
@@ -100,15 +105,71 @@ class _DietRecordPageState extends State<DietRecordPage> {
       useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (context) {
-        return _FoodRecognitionBottomSheet(items: items, imageUrl: imageUrl);
+        return _FoodRecognitionBottomSheet(
+          items: items,
+          imageUrl: imageUrl,
+          provider: context.read<HealthProvider>(),
+        );
       },
     );
   }
 
-  void _addManualDraft() {
+  Future<void> _addManualDraft() async {
+    final result = await showModalBottomSheet<Object>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return _FoodSearchBottomSheet(provider: context.read<HealthProvider>());
+      },
+    );
+    if (!mounted) return;
+
+    final selected = switch (result) {
+      _FoodDraft draft => draft,
+      _CreateFoodRequest request => await _showCreateFoodDialog(
+        request.initialName,
+      ),
+      _EstimateFoodRequest request => await _showEstimateFoodDialog(
+        request.foodName,
+      ),
+      _ => null,
+    };
+    if (selected == null || !mounted) return;
     setState(() {
-      _drafts.add(_FoodDraft.empty());
+      _drafts.add(selected);
     });
+  }
+
+  Future<_FoodDraft?> _showCreateFoodDialog(String initialName) async {
+    final provider = context.read<HealthProvider>();
+    return showDialog<_FoodDraft>(
+      context: context,
+      builder: (context) {
+        return _CreateCustomFoodDialog(
+          initialName: initialName,
+          onCreate: (name, calories) {
+            return provider.createCustomFood(
+              name: name,
+              caloriesPer100g: calories,
+              servingOptions: const {'100克': 100},
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<_FoodDraft?> _showEstimateFoodDialog(String foodName) async {
+    final provider = context.read<HealthProvider>();
+    return showDialog<_FoodDraft>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return _EstimateFoodDialog(foodName: foodName, provider: provider);
+      },
+    );
   }
 
   void _removeDraft(int index) {
@@ -309,17 +370,14 @@ class _DietRecordPageState extends State<DietRecordPage> {
             Builder(
               builder: (context) {
                 final index = i;
+                final draft = _drafts[index];
+                if (draft.isEmpty) {
+                  return _AddFoodPlaceholder(onTap: _addManualDraft);
+                }
                 return _FoodDraftCard(
-                  index: index,
-                  draft: _drafts[index],
+                  draft: draft,
                   canRemove: _drafts.length > 1,
                   onChanged: () => setState(() {}),
-                  onSearchCatalog: (query) {
-                    return context
-                        .read<HealthProvider>()
-                        .repository
-                        .searchFoodCalorieCatalog(query);
-                  },
                   onRemove: () => _removeDraft(index),
                 );
               },
@@ -431,13 +489,691 @@ class _DietRecordPageState extends State<DietRecordPage> {
 
 enum _RecognitionStep { selectFood, selectPortion }
 
+class _CreateFoodRequest {
+  final String initialName;
+
+  const _CreateFoodRequest(this.initialName);
+}
+
+class _EstimateFoodRequest {
+  final String foodName;
+
+  const _EstimateFoodRequest(this.foodName);
+}
+
+class _FoodSearchBottomSheet extends StatefulWidget {
+  final HealthProvider provider;
+
+  const _FoodSearchBottomSheet({required this.provider});
+
+  @override
+  State<_FoodSearchBottomSheet> createState() => _FoodSearchBottomSheetState();
+}
+
+class _FoodSearchBottomSheetState extends State<_FoodSearchBottomSheet> {
+  final TextEditingController _searchCtrl = TextEditingController();
+  late Future<List<FoodCalorieCatalogItem>> _recentFuture;
+  List<FoodCalorieCatalogItem> _results = const [];
+  int _searchToken = 0;
+  bool _searching = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _recentFuture = widget.provider.getRecentFoods(limit: 12);
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _search(String value) async {
+    final query = value.trim();
+    final token = ++_searchToken;
+    if (query.isEmpty) {
+      setState(() {
+        _searching = false;
+        _results = const [];
+      });
+      return;
+    }
+
+    setState(() => _searching = true);
+    final results = await widget.provider.searchFoodCalorieCatalog(
+      query,
+      limit: 12,
+    );
+    if (!mounted || token != _searchToken) return;
+    setState(() {
+      _searching = false;
+      _results = results;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final query = _searchCtrl.text.trim();
+    return Container(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height * 0.82,
+      ),
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          16,
+          10,
+          16,
+          16 + MediaQuery.viewInsetsOf(context).bottom,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 38,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.line,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _searchCtrl,
+              autofocus: true,
+              textInputAction: TextInputAction.search,
+              decoration: InputDecoration(
+                hintText: '搜索食物名称...',
+                prefixIcon: const Icon(Icons.search),
+                filled: true,
+                fillColor: AppColors.background,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+              onChanged: _search,
+            ),
+            const SizedBox(height: 14),
+            if (query.isEmpty)
+              _buildRecentFoods()
+            else
+              _buildSearchResults(query),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRecentFoods() {
+    return Flexible(
+      child: FutureBuilder<List<FoodCalorieCatalogItem>>(
+        future: _recentFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const SizedBox(
+              height: 140,
+              child: Center(
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: AppColors.primary,
+                ),
+              ),
+            );
+          }
+
+          final foods = snapshot.data ?? const [];
+          if (foods.isEmpty) {
+            return const SizedBox(
+              height: 120,
+              child: Center(
+                child: Text('还没有最近常吃，先搜索或创建一个食物', style: AppTextStyles.caption),
+              ),
+            );
+          }
+
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('最近常吃', style: AppTextStyles.section),
+              const SizedBox(height: 8),
+              Flexible(child: _FoodChoiceList(items: foods)),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildSearchResults(String query) {
+    if (_searching) {
+      return const SizedBox(
+        height: 140,
+        child: Center(
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: AppColors.primary,
+          ),
+        ),
+      );
+    }
+
+    if (_results.isEmpty) {
+      return SizedBox(
+        height: 210,
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              OutlinedButton.icon(
+                style: AppButtonStyles.outline,
+                onPressed: () {
+                  Navigator.of(context).pop(_EstimateFoodRequest(query));
+                },
+                icon: const Icon(Icons.auto_awesome),
+                label: const Text('搜索该食物热量'),
+              ),
+              const SizedBox(height: 10),
+              TextButton.icon(
+                style: AppButtonStyles.quiet,
+                onPressed: () {
+                  Navigator.of(context).pop(_CreateFoodRequest(query));
+                },
+                icon: const Icon(Icons.edit_outlined),
+                label: const Text('手动创建新食物'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Flexible(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('搜索结果', style: AppTextStyles.section),
+          const SizedBox(height: 8),
+          Flexible(child: _FoodChoiceList(items: _results)),
+        ],
+      ),
+    );
+  }
+}
+
+class _FoodChoiceList extends StatelessWidget {
+  final List<FoodCalorieCatalogItem> items;
+
+  const _FoodChoiceList({required this.items});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.separated(
+      shrinkWrap: true,
+      itemCount: items.length,
+      separatorBuilder: (_, _) => const Divider(height: 1),
+      itemBuilder: (context, index) {
+        final item = items[index];
+        return ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: CircleAvatar(
+            backgroundColor: item.source == 'custom'
+                ? AppColors.lavenderSoft
+                : AppColors.greenSoft,
+            child: Icon(
+              item.source == 'custom'
+                  ? Icons.person_outline
+                  : Icons.restaurant_menu,
+              color: item.source == 'custom'
+                  ? AppColors.lavender
+                  : AppColors.green,
+            ),
+          ),
+          title: Text(
+            item.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppTextStyles.listTitle,
+          ),
+          subtitle: Text(
+            '${item.caloriesPer100g.toStringAsFixed(0)} kcal/100g',
+            style: AppTextStyles.listSubtitle,
+          ),
+          trailing: TextButton(
+            style: AppButtonStyles.quiet,
+            onPressed: () {
+              Navigator.of(context).pop(_FoodDraft.fromCatalogItem(item));
+            },
+            child: const Text('添加'),
+          ),
+          onTap: () {
+            Navigator.of(context).pop(_FoodDraft.fromCatalogItem(item));
+          },
+        );
+      },
+    );
+  }
+}
+
+class _AddFoodPlaceholder extends StatelessWidget {
+  final VoidCallback onTap;
+
+  const _AddFoodPlaceholder({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: onTap,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 18),
+        decoration: BoxDecoration(
+          color: AppColors.background,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppColors.line),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.add_circle_outline, color: AppColors.faint),
+            const SizedBox(width: 10),
+            Text(
+              '添加食物',
+              style: AppTextStyles.bodyMuted.copyWith(
+                color: AppColors.faint,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _EstimateFoodDialog extends StatefulWidget {
+  final String foodName;
+  final HealthProvider provider;
+
+  const _EstimateFoodDialog({required this.foodName, required this.provider});
+
+  @override
+  State<_EstimateFoodDialog> createState() => _EstimateFoodDialogState();
+}
+
+class _EstimateFoodDialogState extends State<_EstimateFoodDialog> {
+  final TextEditingController _gramsCtrl = TextEditingController(text: '100');
+  final TextEditingController _manualCaloriesCtrl = TextEditingController();
+  FoodCalorieCatalogItem? _estimated;
+  bool _loading = true;
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadEstimate();
+  }
+
+  @override
+  void dispose() {
+    _gramsCtrl.dispose();
+    _manualCaloriesCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadEstimate() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final item = await widget.provider.estimateFood(widget.foodName);
+      if (!mounted) return;
+      setState(() {
+        _estimated = item;
+        _loading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = friendlyActionError(error, action: 'AI 查询食物热量');
+      });
+    }
+  }
+
+  Future<void> _confirm() async {
+    final item = _estimated;
+    if (item == null) return;
+    final grams = double.tryParse(_gramsCtrl.text) ?? 100;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final saved = await widget.provider.createCustomFood(
+        name: item.name,
+        caloriesPer100g: item.caloriesPer100g,
+        carbsPer100g: item.carbsPer100g,
+        proteinPer100g: item.proteinPer100g,
+        fatPer100g: item.fatPer100g,
+        giValue: item.giValue,
+        servingOptions: item.servingOptions,
+        source: item.source ?? 'zhipu',
+        isAiGenerated: true,
+        confidence: item.confidence,
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(
+        _FoodDraft.fromCatalogItem(
+          saved.copyNutritionFrom(item),
+          grams: grams <= 0 ? 100 : grams,
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _error = friendlyActionError(error, action: '保存 AI 食物');
+      });
+    }
+  }
+
+  Future<void> _createManually() async {
+    final calories = double.tryParse(_manualCaloriesCtrl.text);
+    if (calories == null || calories <= 0) {
+      setState(() => _error = 'AI 暂时不可用，请先填写每100g热量');
+      return;
+    }
+    final grams = double.tryParse(_gramsCtrl.text) ?? 100;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final saved = await widget.provider.createCustomFood(
+        name: widget.foodName,
+        caloriesPer100g: calories,
+        servingOptions: const {'100克': 100},
+      );
+      if (!mounted) return;
+      Navigator.of(
+        context,
+      ).pop(_FoodDraft.fromCatalogItem(saved, grams: grams <= 0 ? 100 : grams));
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _error = friendlyActionError(error, action: '创建自定义食物');
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final item = _estimated;
+    return AlertDialog(
+      title: const Text('AI 查询食物热量'),
+      content: _loading
+          ? const SizedBox(
+              height: 120,
+              child: Center(
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: AppColors.primary,
+                ),
+              ),
+            )
+          : item == null
+          ? Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _error ?? '没有查到这个食物',
+                  style: AppTextStyles.caption.copyWith(
+                    color: _error == null ? AppColors.muted : AppColors.red,
+                  ),
+                ),
+                if (_error != null) ...[
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
+                    style: AppButtonStyles.outline,
+                    onPressed: _saving ? null : _loadEstimate,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('重试 AI 查询'),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _manualCaloriesCtrl,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  decoration: const InputDecoration(
+                    labelText: '每100g热量',
+                    suffixText: 'kcal',
+                  ),
+                ),
+                TextField(
+                  controller: _gramsCtrl,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  decoration: const InputDecoration(
+                    labelText: '当前克重',
+                    suffixText: 'g',
+                  ),
+                ),
+              ],
+            )
+          : Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(item.name, style: AppTextStyles.section),
+                const SizedBox(height: 6),
+                Text(
+                  '🔥 ${item.caloriesPer100g.toStringAsFixed(0)} kcal / 100g',
+                  style: AppTextStyles.listSubtitle,
+                ),
+                if (item.servingOptions.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: item.servingOptions.entries.take(5).map((entry) {
+                      return ActionChip(
+                        visualDensity: VisualDensity.compact,
+                        label: Text(
+                          '${entry.key} · ${entry.value.toStringAsFixed(0)}g',
+                        ),
+                        onPressed: () {
+                          _gramsCtrl.text = entry.value.toStringAsFixed(0);
+                        },
+                      );
+                    }).toList(),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _gramsCtrl,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  decoration: const InputDecoration(
+                    labelText: '当前克重',
+                    suffixText: 'g',
+                  ),
+                ),
+                if (_error != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    _error!,
+                    style: AppTextStyles.caption.copyWith(color: AppColors.red),
+                  ),
+                ],
+              ],
+            ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        if (!_loading && item != null)
+          ElevatedButton(
+            style: AppButtonStyles.primary,
+            onPressed: _saving ? null : _confirm,
+            child: Text(_saving ? '保存中' : '确认添加'),
+          ),
+        if (!_loading && item == null)
+          ElevatedButton(
+            style: AppButtonStyles.primary,
+            onPressed: _saving ? null : _createManually,
+            child: Text(_saving ? '保存中' : '手动添加'),
+          ),
+      ],
+    );
+  }
+}
+
+class _CreateCustomFoodDialog extends StatefulWidget {
+  final String initialName;
+  final Future<FoodCalorieCatalogItem> Function(String name, double calories)
+  onCreate;
+
+  const _CreateCustomFoodDialog({
+    required this.initialName,
+    required this.onCreate,
+  });
+
+  @override
+  State<_CreateCustomFoodDialog> createState() =>
+      _CreateCustomFoodDialogState();
+}
+
+class _CreateCustomFoodDialogState extends State<_CreateCustomFoodDialog> {
+  late final TextEditingController _nameCtrl;
+  final TextEditingController _caloriesCtrl = TextEditingController();
+  final TextEditingController _gramsCtrl = TextEditingController(text: '100');
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameCtrl = TextEditingController(text: widget.initialName);
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _caloriesCtrl.dispose();
+    _gramsCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final name = _nameCtrl.text.trim();
+    final calories = double.tryParse(_caloriesCtrl.text);
+    if (name.isEmpty || calories == null || calories <= 0) {
+      setState(() => _error = '请填写食物名称和有效热量');
+      return;
+    }
+
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final item = await widget.onCreate(name, calories);
+      final grams = double.tryParse(_gramsCtrl.text) ?? 100;
+      if (!mounted) return;
+      Navigator.of(
+        context,
+      ).pop(_FoodDraft.fromCatalogItem(item, grams: grams <= 0 ? 100 : grams));
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _error = friendlyActionError(error, action: '创建自定义食物');
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('创建自定义食物'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _nameCtrl,
+            textInputAction: TextInputAction.next,
+            decoration: const InputDecoration(labelText: '食物名称'),
+          ),
+          TextField(
+            controller: _caloriesCtrl,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            textInputAction: TextInputAction.next,
+            decoration: const InputDecoration(
+              labelText: '每100g热量',
+              suffixText: 'kcal',
+            ),
+          ),
+          TextField(
+            controller: _gramsCtrl,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            textInputAction: TextInputAction.done,
+            decoration: const InputDecoration(
+              labelText: '当前克重',
+              suffixText: 'g',
+            ),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              _error!,
+              style: AppTextStyles.caption.copyWith(color: AppColors.red),
+            ),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        ElevatedButton(
+          style: AppButtonStyles.primary,
+          onPressed: _saving ? null : _submit,
+          child: Text(_saving ? '创建中' : '确认'),
+        ),
+      ],
+    );
+  }
+}
+
 class _FoodRecognitionBottomSheet extends StatefulWidget {
   final List<MealRecognitionItem> items;
   final String imageUrl;
+  final HealthProvider provider;
 
   const _FoodRecognitionBottomSheet({
     required this.items,
     required this.imageUrl,
+    required this.provider,
   });
 
   @override
@@ -451,6 +1187,8 @@ class _FoodRecognitionBottomSheetState
   late MealRecognitionItem _selected = widget.items.first;
   late double _selectedWeight = _initialWeight(_selected);
   late String _selectedServing = _initialServing(_selected);
+  bool _estimating = false;
+  String? _estimateError;
 
   @override
   Widget build(BuildContext context) {
@@ -542,8 +1280,13 @@ class _FoodRecognitionBottomSheetState
                 ),
                 subtitle: Text(
                   '${item.caloriesRaw.toStringAsFixed(0)} kcal/100g'
-                  '${item.confidence > 0 ? ' · 匹配 ${(item.confidence * 100).toStringAsFixed(0)}%' : ''}',
-                  style: AppTextStyles.listSubtitle,
+                  '${item.confidence > 0 ? ' · 匹配 ${(item.confidence * 100).toStringAsFixed(0)}%' : ''}'
+                  '${_isLowConfidence(item) ? ' · 可能不准' : ''}',
+                  style: AppTextStyles.listSubtitle.copyWith(
+                    color: _isLowConfidence(item)
+                        ? AppColors.yellow
+                        : AppColors.muted,
+                  ),
                 ),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () {
@@ -574,6 +1317,8 @@ class _FoodRecognitionBottomSheetState
     final options = _selected.servingOptions.isEmpty
         ? const {'100克': 100.0}
         : _selected.servingOptions;
+    final shouldOfferEstimate =
+        _selected.catalogId == null || _isLowConfidence(_selected);
 
     return Column(
       key: const ValueKey('portion-selection'),
@@ -643,6 +1388,37 @@ class _FoodRecognitionBottomSheetState
             );
           }).toList(),
         ),
+        if (shouldOfferEstimate) ...[
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            style: AppButtonStyles.outline,
+            onPressed: _estimating ? null : _estimateSelectedFood,
+            icon: _estimating
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: AppColors.primary,
+                    ),
+                  )
+                : const Icon(Icons.auto_awesome),
+            label: Text(
+              _estimating
+                  ? '正在估算'
+                  : _estimateError == null
+                  ? 'AI 估算热量/份量'
+                  : '重试 AI 估算',
+            ),
+          ),
+          if (_estimateError != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              _estimateError!,
+              style: AppTextStyles.caption.copyWith(color: AppColors.red),
+            ),
+          ],
+        ],
         const SizedBox(height: 16),
         SizedBox(
           width: double.infinity,
@@ -674,24 +1450,49 @@ class _FoodRecognitionBottomSheetState
     if (item.servingOptions.isEmpty) return '100克';
     return item.servingOptions.keys.first;
   }
+
+  bool _isLowConfidence(MealRecognitionItem item) {
+    return item.confidence > 0 && item.confidence < 0.72;
+  }
+
+  Future<void> _estimateSelectedFood() async {
+    final name = (_selected.foodNameConfirmed ?? _selected.foodNameRaw).trim();
+    if (name.isEmpty) return;
+    setState(() {
+      _estimating = true;
+      _estimateError = null;
+    });
+    try {
+      final estimated = await widget.provider.estimateFood(name);
+      if (!mounted) return;
+      final next = _selected.copyFromEstimate(estimated);
+      setState(() {
+        _selected = next;
+        _selectedWeight = _initialWeight(next);
+        _selectedServing = _initialServing(next);
+        _estimating = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _estimating = false;
+        _estimateError = friendlyActionError(error, action: 'AI 估算食物');
+      });
+    }
+  }
 }
 
 class _FoodDraftCard extends StatefulWidget {
-  final int index;
   final _FoodDraft draft;
   final bool canRemove;
   final VoidCallback onChanged;
   final VoidCallback onRemove;
-  final Future<List<FoodCalorieCatalogItem>> Function(String query)
-  onSearchCatalog;
 
   const _FoodDraftCard({
-    required this.index,
     required this.draft,
     required this.canRemove,
     required this.onChanged,
     required this.onRemove,
-    required this.onSearchCatalog,
   });
 
   @override
@@ -699,38 +1500,43 @@ class _FoodDraftCard extends StatefulWidget {
 }
 
 class _FoodDraftCardState extends State<_FoodDraftCard> {
-  int _searchToken = 0;
-  bool _searching = false;
+  late final FocusNode _gramsFocusNode;
 
   _FoodDraft get draft => widget.draft;
 
-  Future<void> _searchCatalog(String query) async {
-    final normalized = query.trim();
-    final token = ++_searchToken;
-    if (normalized.length < 2) {
-      setState(() => _searching = false);
-      draft.catalogMatches = const [];
-      widget.onChanged();
-      return;
-    }
+  @override
+  void initState() {
+    super.initState();
+    _gramsFocusNode = FocusNode();
+    _gramsFocusNode.addListener(_selectAllGramsOnFocus);
+  }
 
-    setState(() => _searching = true);
-    final matches = await widget.onSearchCatalog(normalized);
-    if (!mounted || token != _searchToken) return;
+  @override
+  void dispose() {
+    _gramsFocusNode
+      ..removeListener(_selectAllGramsOnFocus)
+      ..dispose();
+    super.dispose();
+  }
 
-    setState(() => _searching = false);
-    draft.catalogMatches = matches;
-    if (matches.isNotEmpty) {
-      draft.applyCatalogItem(matches.first);
-    }
-    widget.onChanged();
+  void _selectAllGramsOnFocus() {
+    if (!_gramsFocusNode.hasFocus) return;
+    draft.gramsCtrl.selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: draft.gramsCtrl.text.length,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final name = draft.confirmedName.trim().isEmpty
+        ? '未命名食物'
+        : draft.confirmedName.trim();
+    final caloriesText = draft.rawCalories.toStringAsFixed(0);
+    final finalCalories = draft.finalCalories.toStringAsFixed(0);
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(8),
@@ -740,20 +1546,74 @@ class _FoodDraftCardState extends State<_FoodDraftCard> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Expanded(
-                child: Text(
-                  '食物 ${widget.index + 1}',
-                  style: AppTextStyles.caption.copyWith(
-                    fontWeight: FontWeight.w800,
-                    color: AppColors.primaryDark,
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: AppTextStyles.listTitle.copyWith(
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                        if (draft.isAiGenerated) ...[
+                          const SizedBox(width: 6),
+                          const _AiEstimateBadge(),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '🔥 $caloriesText kcal / 100g',
+                      style: AppTextStyles.listSubtitle,
+                    ),
+                    if (draft.isFromRecognition &&
+                        draft.rawName.trim().isNotEmpty &&
+                        draft.rawName.trim() != name) ...[
+                      const SizedBox(height: 3),
+                      Text('识别：${draft.rawName}', style: AppTextStyles.tiny),
+                    ],
+                  ],
                 ),
               ),
-              if (draft.isAiGenerated) ...[
-                const _AiEstimateBadge(),
-                const SizedBox(width: 6),
-              ],
+              const SizedBox(width: 10),
+              SizedBox(
+                width: 86,
+                child: TextField(
+                  controller: draft.gramsCtrl,
+                  focusNode: _gramsFocusNode,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  textInputAction: TextInputAction.done,
+                  textAlign: TextAlign.center,
+                  decoration: _gramsDecoration(),
+                  onChanged: (_) {
+                    draft.servingUnit = 'g';
+                    draft.manualFinalCalories = false;
+                    draft.syncFinalCalories();
+                    widget.onChanged();
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 70,
+                child: Text(
+                  '= $finalCalories kcal',
+                  textAlign: TextAlign.right,
+                  style: AppTextStyles.listMeta,
+                ),
+              ),
+              const SizedBox(width: 4),
               IconButton(
                 tooltip: widget.canRemove ? '删除' : '清空',
                 visualDensity: VisualDensity.compact,
@@ -771,107 +1631,6 @@ class _FoodDraftCardState extends State<_FoodDraftCard> {
               ),
             ],
           ),
-          if (draft.isFromRecognition && draft.rawName.trim().isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Text('识别：${draft.rawName}', style: AppTextStyles.tiny),
-          ],
-          const SizedBox(height: 8),
-          TextField(
-            controller: draft.confirmedNameCtrl,
-            textInputAction: TextInputAction.next,
-            decoration: _compactDecoration('食物名', Icons.restaurant_outlined),
-            onChanged: _searchCatalog,
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: draft.rawCalCtrl,
-                  keyboardType: TextInputType.number,
-                  textInputAction: TextInputAction.next,
-                  decoration: _compactDecoration(
-                    '每100g',
-                    Icons.local_fire_department_outlined,
-                    suffix: 'kcal',
-                  ),
-                  onChanged: (_) {
-                    draft.manualFinalCalories = false;
-                    draft.syncFinalCalories();
-                    widget.onChanged();
-                  },
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: TextField(
-                  controller: draft.gramsCtrl,
-                  keyboardType: TextInputType.number,
-                  textInputAction: TextInputAction.next,
-                  decoration: _compactDecoration(
-                    '克重',
-                    Icons.scale_outlined,
-                    suffix: 'g',
-                  ),
-                  onChanged: (_) {
-                    draft.servingUnit = 'g';
-                    draft.manualFinalCalories = false;
-                    draft.syncFinalCalories();
-                    widget.onChanged();
-                  },
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: TextField(
-                  controller: draft.finalCalCtrl,
-                  keyboardType: TextInputType.number,
-                  textInputAction: TextInputAction.done,
-                  decoration: _compactDecoration(
-                    '总热量',
-                    Icons.calculate_outlined,
-                    suffix: 'kcal',
-                  ),
-                  onChanged: (_) {
-                    draft.manualFinalCalories = true;
-                    widget.onChanged();
-                  },
-                ),
-              ),
-            ],
-          ),
-          if (_searching) ...[
-            const SizedBox(height: 8),
-            const LinearProgressIndicator(
-              minHeight: 2,
-              color: AppColors.primary,
-              backgroundColor: AppColors.line,
-            ),
-          ],
-          if (draft.catalogMatches.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: draft.catalogMatches.take(4).map((item) {
-                return ActionChip(
-                  visualDensity: VisualDensity.compact,
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  labelStyle: AppTextStyles.tiny.copyWith(
-                    color: AppColors.text,
-                  ),
-                  label: Text(
-                    '${item.name} · '
-                    '${item.caloriesPer100g.toStringAsFixed(0)} kcal/100g',
-                  ),
-                  onPressed: () {
-                    setState(() => draft.applyCatalogItem(item));
-                    widget.onChanged();
-                  },
-                );
-              }).toList(),
-            ),
-          ],
           if (draft.servingOptions.isNotEmpty) ...[
             const SizedBox(height: 8),
             Wrap(
@@ -937,23 +1696,24 @@ class _FoodDraftCardState extends State<_FoodDraftCard> {
     );
   }
 
-  InputDecoration _compactDecoration(
-    String label,
-    IconData icon, {
-    String? suffix,
-  }) {
+  InputDecoration _gramsDecoration() {
     return InputDecoration(
-      labelText: label,
-      suffixText: suffix,
-      prefixIcon: Icon(icon, color: AppColors.primaryDark, size: 18),
-      prefixIconConstraints: const BoxConstraints(minWidth: 36),
+      suffixText: 'g',
       filled: true,
       fillColor: AppColors.background,
       isDense: true,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(6),
         borderSide: BorderSide.none,
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(6),
+        borderSide: BorderSide.none,
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(6),
+        borderSide: const BorderSide(color: AppColors.primary, width: 1),
       ),
     );
   }
@@ -975,6 +1735,7 @@ class _FoodDraft {
   String servingUnit;
   Map<String, double> servingOptions;
   List<FoodCalorieCatalogItem> catalogMatches;
+  MealRecognitionItem? sourceItem;
   bool manualFinalCalories = false;
 
   _FoodDraft({
@@ -992,6 +1753,7 @@ class _FoodDraft {
     required this.servingOptions,
     required this.catalogMatches,
     required this.imageUrl,
+    this.sourceItem,
   }) : rawNameCtrl = TextEditingController(text: rawName),
        confirmedNameCtrl = TextEditingController(text: confirmedName),
        rawCalCtrl = TextEditingController(text: rawCalories.toStringAsFixed(0)),
@@ -1039,6 +1801,31 @@ class _FoodDraft {
       servingOptions: item.servingOptions,
       catalogMatches: const [],
       imageUrl: imageUrl,
+      sourceItem: item,
+    );
+  }
+
+  factory _FoodDraft.fromCatalogItem(
+    FoodCalorieCatalogItem item, {
+    double grams = 100,
+  }) {
+    final servingOptions = item.servingOptions.isEmpty
+        ? const {'100克': 100.0}
+        : item.servingOptions;
+    return _FoodDraft(
+      rawName: item.name,
+      confirmedName: item.name,
+      rawCalories: item.caloriesPer100g,
+      carbsPer100g: item.carbsPer100g,
+      proteinPer100g: item.proteinPer100g,
+      fatPer100g: item.fatPer100g,
+      giValue: item.giValue,
+      isAiGenerated: item.isAiGenerated,
+      grams: grams,
+      servingUnit: 'g',
+      servingOptions: servingOptions,
+      catalogMatches: const [],
+      imageUrl: null,
     );
   }
 
@@ -1051,6 +1838,8 @@ class _FoodDraft {
       AnalysisService.calculateMealCaloriesByGrams(rawCalories, grams);
   double get totalCarbs =>
       AnalysisService.calculateNutrientByGrams(carbsPer100g, grams);
+  bool get isEmpty =>
+      confirmedName.trim().isEmpty && rawCalories <= 0 && grams <= 0;
   double? get caloriesUserOverride {
     if (!manualFinalCalories) return null;
     final value = double.tryParse(finalCalCtrl.text);

@@ -6,6 +6,9 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
+const functionVersion = 'analysis-report-2026-05-06-v2';
+const maxEvidenceRows = 80;
+
 const allowedTimezones = new Set([
   'Asia/Shanghai',
   'Asia/Tokyo',
@@ -41,23 +44,51 @@ type MealRow = {
 
 type MealItemRow = {
   meal_id: string;
+  food_name_raw?: string | null;
   food_name_confirmed?: string | null;
+  calories_raw?: number | string | null;
+  calories_final?: number | string | null;
+  calories_user_override?: number | string | null;
+  portion_size?: number | string | null;
+  grams?: number | string | null;
+  serving_unit?: string | null;
 };
 
 type StatusRow = {
+  id?: string;
   related_meal_id?: string | null;
   related_exercise_id?: string | null;
   record_time: string;
   status_level?: string | null;
+  notes?: string | null;
 };
 
 type ExerciseRow = {
   id: string;
+  motion_id?: string | null;
   exercise_time: string;
   duration?: number | string | null;
   calories_burned?: number | string | null;
   mets_snapshot?: number | string | null;
   exercise_catalog?: { name?: string | null } | null;
+};
+
+type ExerciseCatalogRow = {
+  id: string;
+  name?: string | null;
+};
+
+type ProfileRow = {
+  id: string;
+  display_name?: string | null;
+  gender?: string | null;
+  height?: number | string | null;
+  birth_date?: string | null;
+};
+
+type BodyMetricRow = {
+  weight?: number | string | null;
+  record_time?: string | null;
 };
 
 Deno.serve(async (req) => {
@@ -88,6 +119,27 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const range = normalizeDateRange(body.start_date, body.end_date);
     const timezone = normalizeTimezone(body.timezone);
+    if (body.mode === 'cards') {
+      const serviceRoleKey = mustGetEnv('SUPABASE_SERVICE_ROLE_KEY');
+      const admin = createClient(supabaseUrl, serviceRoleKey);
+      const report = await buildReportInFunction(admin, userData.user.id, range, timezone);
+      const evidence = await buildEvidencePayload(
+        admin,
+        userData.user.id,
+        range,
+        timezone,
+        report,
+      );
+      const cardsResult = await buildAnalysisCards(evidence);
+      return json({
+        analysis_cards: cardsResult.cards,
+        analysis_cards_source: cardsResult.source,
+        report_type: cardsResult.cards.report_type ?? 'glucose_report',
+        evidence_cache_key: evidence.cache_key,
+        ...(cardsResult.error ? { analysis_cards_error: cardsResult.error } : {}),
+      });
+    }
+
     const rpcParams = {
       start_date: range.startDate,
       end_date: range.endDate,
@@ -113,25 +165,6 @@ Deno.serve(async (req) => {
       report.energy_correlation,
     );
 
-    if (body.mode === 'cards') {
-      const serviceRoleKey = mustGetEnv('SUPABASE_SERVICE_ROLE_KEY');
-      const admin = createClient(supabaseUrl, serviceRoleKey);
-      const evidence = await buildEvidencePayload(
-        admin,
-        userData.user.id,
-        range,
-        timezone,
-        report,
-      );
-      const cardsResult = await buildAnalysisCards(evidence);
-      return json({
-        analysis_cards: cardsResult.cards,
-        analysis_cards_source: cardsResult.source,
-        evidence_cache_key: evidence.cache_key,
-        ...(cardsResult.error ? { analysis_cards_error: cardsResult.error } : {}),
-      });
-    }
-
     const summaryResult = body.include_summary_llm === true
       ? await buildLlmSummary({
         weekly_summary_metrics: report.weekly_summary_metrics,
@@ -149,8 +182,9 @@ Deno.serve(async (req) => {
       ...(summaryResult.error ? { summary_error: summaryResult.error } : {}),
     });
   } catch (error) {
-    console.error(error);
-    return json({ error: error instanceof Error ? error.message : 'Unknown error' }, 500);
+    const message = describeError(error);
+    console.error('analysis-report fatal:', message, error);
+    return json({ error: message }, 500);
   }
 });
 
@@ -198,7 +232,8 @@ async function buildReportInFunction(
         .eq('user_id', userId)
         .gte('record_time', fromIso.toISOString())
         .lte('record_time', toIso.toISOString())
-        .order('record_time', { ascending: true }),
+        .order('record_time', { ascending: true })
+        .limit(maxEvidenceRows),
     ),
     selectRows<MealRow>(
       admin
@@ -207,7 +242,8 @@ async function buildReportInFunction(
         .eq('user_id', userId)
         .gte('meal_time', fromIso.toISOString())
         .lte('meal_time', toIso.toISOString())
-        .order('meal_time', { ascending: true }),
+        .order('meal_time', { ascending: true })
+        .limit(maxEvidenceRows),
     ),
     selectRows<StatusRow>(
       admin
@@ -216,7 +252,8 @@ async function buildReportInFunction(
         .eq('user_id', userId)
         .gte('record_time', fromIso.toISOString())
         .lte('record_time', toIso.toISOString())
-        .order('record_time', { ascending: true }),
+        .order('record_time', { ascending: true })
+        .limit(maxEvidenceRows),
     ),
   ]);
 
@@ -266,7 +303,7 @@ async function rpc<T>(
   params: Record<string, unknown>,
 ): Promise<T[]> {
   const { data, error } = await client.rpc(name, params);
-  if (error) throw error;
+  if (error) throw new Error(`${name}: ${describeError(error)}`);
   return Array.isArray(data) ? data as T[] : [];
 }
 
@@ -274,7 +311,7 @@ async function selectRows<T>(
   query: PromiseLike<{ data: unknown; error: unknown }>,
 ): Promise<T[]> {
   const { data, error } = await query;
-  if (error) throw error;
+  if (error) throw new Error(describeError(error));
   return Array.isArray(data) ? data as T[] : [];
 }
 
@@ -307,8 +344,45 @@ async function getLatestGlucoseInRange(
   return null;
 }
 
+async function fetchMealItemsForEvidence(
+  admin: ReturnType<typeof createClient>,
+  mealIds: string[],
+) {
+  const modern = await admin
+    .from('meal_items')
+    .select('meal_id,food_name_raw,food_name_confirmed,calories_raw,calories_final,calories_user_override,grams,serving_unit')
+    .in('meal_id', mealIds);
+
+  if (!modern.error) {
+    return Array.isArray(modern.data) ? modern.data as MealItemRow[] : [];
+  }
+
+  const message = describeError(modern.error).toLowerCase();
+  const canFallback =
+    message.includes('calories_user_override') ||
+    message.includes('grams') ||
+    message.includes('serving_unit') ||
+    message.includes('column') && message.includes('does not exist') ||
+    message.includes('could not find');
+  if (!canFallback) {
+    throw new Error(`meal_items modern select: ${describeError(modern.error)}`);
+  }
+
+  const legacy = await admin
+    .from('meal_items')
+    .select('meal_id,food_name_raw,food_name_confirmed,calories_raw,calories_final,portion_size')
+    .in('meal_id', mealIds);
+  if (legacy.error) {
+    throw new Error(`meal_items legacy select: ${describeError(legacy.error)}`);
+  }
+  return Array.isArray(legacy.data) ? legacy.data as MealItemRow[] : [];
+}
+
 function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
+  const payload = body && typeof body === 'object' && !Array.isArray(body)
+    ? { ...(body as Row), function_version: functionVersion }
+    : body;
+  return new Response(JSON.stringify(payload), {
     status,
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });
@@ -318,6 +392,47 @@ function mustGetEnv(name: string) {
   const value = Deno.env.get(name);
   if (!value) throw new Error(`Missing env: ${name}`);
   return value;
+}
+
+function describeError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message || error.name;
+  }
+  if (typeof error === 'string') return error;
+  if (error && typeof error === 'object') {
+    const row = error as Row;
+    const parts = [
+      row.message,
+      row.code,
+      row.details,
+      row.hint,
+      row.error,
+    ]
+      .map((part) => `${part ?? ''}`.trim())
+      .filter((part) => part.length > 0 && part !== 'null' && part !== 'undefined');
+    if (parts.length > 0) return parts.join(' | ');
+  }
+  try {
+    const value = JSON.stringify(error);
+    if (value && value !== '{}') return value;
+    return Object.prototype.toString.call(error);
+  } catch (_) {
+    return 'Unknown error';
+  }
+}
+
+function resolveMealItemCalories(item: MealItemRow) {
+  const finalCalories = toNumber(item.calories_final);
+  if (finalCalories !== null) return finalCalories;
+  const override = toNumber(item.calories_user_override);
+  if (override !== null) return override;
+  const raw = toNumber(item.calories_raw);
+  if (raw === null) return null;
+  const grams = toNumber(item.grams);
+  if (grams !== null && grams > 0) return raw * grams / 100;
+  const portion = toNumber(item.portion_size);
+  if (portion !== null && portion > 0) return raw * portion;
+  return raw;
 }
 
 function normalizeDateRange(startValue: unknown, endValue: unknown) {
@@ -359,6 +474,22 @@ function toNumber(value: unknown) {
   if (value === null || value === undefined || value === '') return null;
   const parsed = Number.parseFloat(`${value}`);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function sumNumbers(values: Array<number | null>) {
+  return values.reduce((sum, value) => sum + (value ?? 0), 0);
+}
+
+function ageFromBirthDate(value: unknown) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}/.test(value)) return null;
+  const birthDate = new Date(`${value.slice(0, 10)}T00:00:00.000Z`);
+  if (Number.isNaN(birthDate.getTime())) return null;
+  const today = new Date();
+  let age = today.getUTCFullYear() - birthDate.getUTCFullYear();
+  const monthDiff = today.getUTCMonth() - birthDate.getUTCMonth();
+  const dayDiff = today.getUTCDate() - birthDate.getUTCDate();
+  if (monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)) age -= 1;
+  return age >= 0 && age <= 120 ? age : null;
 }
 
 function round(value: number | null, digits = 2) {
@@ -656,7 +787,7 @@ async function buildEvidencePayload(
   const toIso = new Date(`${range.endDate}T23:59:59.999Z`);
   toIso.setUTCDate(toIso.getUTCDate() + 1);
 
-  const [glucoseRows, mealRows, statusRows, exerciseRows] = await Promise.all([
+  const [glucoseRows, mealRows, statusRows, exerciseRows, profileRow, bodyMetricRows] = await Promise.all([
     selectRows<GlucoseRow>(
       admin
         .from('blood_glucose_logs')
@@ -678,7 +809,7 @@ async function buildEvidencePayload(
     selectRows<StatusRow>(
       admin
         .from('wellness_status')
-        .select('record_time,status_level,related_meal_id,related_exercise_id')
+        .select('id,record_time,status_level,notes,related_meal_id,related_exercise_id')
         .eq('user_id', userId)
         .gte('record_time', fromIso.toISOString())
         .lte('record_time', toIso.toISOString())
@@ -687,30 +818,73 @@ async function buildEvidencePayload(
     selectRows<ExerciseRow>(
       admin
         .from('exercise_logs')
-        .select('id,exercise_time,duration,calories_burned,mets_snapshot,exercise_catalog(name)')
+        .select('id,motion_id,exercise_time,duration,calories_burned,mets_snapshot')
         .eq('user_id', userId)
         .gte('exercise_time', fromIso.toISOString())
         .lte('exercise_time', toIso.toISOString())
-        .order('exercise_time', { ascending: true }),
+        .order('exercise_time', { ascending: true })
+        .limit(maxEvidenceRows),
+    ),
+    admin
+      .from('user_profile')
+      .select('id,display_name,gender,height,birth_date')
+      .eq('id', userId)
+      .maybeSingle()
+      .then(({ data }) => data as ProfileRow | null),
+    selectRows<BodyMetricRow>(
+      admin
+        .from('user_body_metrics')
+        .select('weight,record_time')
+        .eq('user_id', userId)
+        .order('record_time', { ascending: false })
+        .limit(1),
     ),
   ]);
+
+  const motionIds = Array.from(
+    new Set(
+      exerciseRows
+        .map((item) => `${item.motion_id ?? ''}`.trim())
+        .filter((id) => id.length > 0),
+    ),
+  );
+  const exerciseCatalogRows = motionIds.length === 0
+    ? []
+    : await selectRows<ExerciseCatalogRow>(
+      admin
+        .from('exercise_catalog')
+        .select('id,name')
+        .in('id', motionIds),
+    );
+  const exerciseNameById = new Map(
+    exerciseCatalogRows.map((item) => [item.id, item.name ?? '运动']),
+  );
 
   const mealIds = mealRows.map((meal) => meal.id);
   const mealItems = mealIds.length === 0
     ? []
-    : await selectRows<MealItemRow>(
-      admin
-        .from('meal_items')
-        .select('meal_id,food_name_confirmed')
-        .in('meal_id', mealIds),
-    );
-  const itemsByMeal = new Map<string, string[]>();
+    : await fetchMealItemsForEvidence(admin, mealIds);
+  const itemsByMeal = new Map<string, Array<{
+    name: string;
+    raw_name: string | null;
+    calories_final: number | null;
+    calories_raw: number | null;
+    grams: number | null;
+    serving_unit: string | null;
+  }>>();
   for (const item of mealItems) {
     const name = `${item.food_name_confirmed ?? ''}`.trim();
     if (!name) continue;
-    const names = itemsByMeal.get(item.meal_id) ?? [];
-    names.push(name);
-    itemsByMeal.set(item.meal_id, names);
+    const items = itemsByMeal.get(item.meal_id) ?? [];
+    items.push({
+      name,
+      raw_name: `${item.food_name_raw ?? ''}`.trim() || null,
+      calories_final: resolveMealItemCalories(item),
+      calories_raw: toNumber(item.calories_raw),
+      grams: toNumber(item.grams),
+      serving_unit: `${item.serving_unit ?? ''}`.trim() || null,
+    });
+    itemsByMeal.set(item.meal_id, items);
   }
 
   const normalizedGlucose = glucoseRows
@@ -737,6 +911,7 @@ async function buildEvidencePayload(
     const date = localDate(exercise.exercise_time, timezone);
     return date >= range.startDate && date <= range.endDate;
   });
+  const mealItemsInRange = mealsInRange.flatMap((meal) => itemsByMeal.get(meal.id) ?? []);
 
   const mealEvidence = mealsInRange.slice(-8).reverse().map((meal) => {
     const mealTime = new Date(meal.meal_time).getTime();
@@ -774,15 +949,20 @@ async function buildEvidencePayload(
     return {
       meal: meal.meal_type ?? '餐食',
       time: localDisplayTime(meal.meal_time, timezone),
-      foods: itemsByMeal.get(meal.id) ?? [],
+      foods: (itemsByMeal.get(meal.id) ?? []).map((item) => item.name),
+      items: itemsByMeal.get(meal.id) ?? [],
+      total_calories: round(sumNumbers((itemsByMeal.get(meal.id) ?? []).map((item) => item.calories_final)), 0),
       pre_glucose: round(pre?.glucose_mmol ?? null),
       post_glucose: round(post?.glucose_mmol ?? null),
       post_minutes: post ? Math.round((new Date(post.record_time).getTime() - mealTime) / 60000) : null,
       glucose_delta: pre && post ? round((post.glucose_mmol ?? 0) - (pre.glucose_mmol ?? 0)) : null,
       status_after: status?.status_level ?? null,
+      status_notes: status?.notes ?? null,
       exercise_after: exercise ? {
-        name: exercise.exercise_catalog?.name ?? '运动',
+        name: exerciseNameById.get(`${exercise.motion_id ?? ''}`) ?? '运动',
         minutes: toNumber(exercise.duration) ?? 0,
+        calories_burned: toNumber(exercise.calories_burned),
+        mets_snapshot: toNumber(exercise.mets_snapshot),
       } : null,
       missing,
     };
@@ -810,7 +990,7 @@ async function buildEvidencePayload(
       mealsInRange.length,
       statusInRange.length,
       exerciseInRange.length,
-      latestTimes.at(-1) ?? 'empty',
+      latestTimes.length === 0 ? 'empty' : latestTimes[latestTimes.length - 1],
     ].join('|'),
     weekly_metrics: {
       glucose_count: toNumber(report.weekly_summary_metrics.reading_count) ?? 0,
@@ -821,13 +1001,51 @@ async function buildEvidencePayload(
       cv: toNumber(report.weekly_summary_metrics.cv),
       in_range_ratio: toNumber(report.weekly_summary_metrics.in_range_ratio),
     },
+    user_profile: {
+      gender: profileRow?.gender ?? null,
+      height: toNumber(profileRow?.height),
+      birth_date: profileRow?.birth_date ?? null,
+      age: ageFromBirthDate(profileRow?.birth_date),
+      weight: toNumber(bodyMetricRows[0]?.weight),
+      weight_record_time: bodyMetricRows[0]?.record_time ?? null,
+    },
+    glucose_records: glucoseInRange.slice(-24).map((row) => ({
+      time: localDisplayTime(row.record_time, timezone),
+      period: row.time_period,
+      value: round(row.glucose_mmol),
+      source: row.source,
+    })),
+    dietary: {
+      meal_count: mealsInRange.length,
+      item_count: mealItemsInRange.length,
+      total_calories: round(sumNumbers(mealItemsInRange.map((item) => item.calories_final)), 0),
+      recent_meals: mealEvidence,
+    },
     meal_evidence: mealEvidence,
     food_signals: report.food_signals.slice(0, 5),
     energy_correlation: report.energy_correlation,
     exercise_evidence: {
       recent_count: exerciseInRange.length,
       total_minutes: totalExerciseMinutes,
+      total_calories_burned: round(sumNumbers(exerciseInRange.map((item) => toNumber(item.calories_burned))), 0),
       after_meal_records: mealEvidence.filter((meal) => meal.exercise_after !== null).length,
+      logs: exerciseInRange.slice(-12).map((item) => ({
+        time: localDisplayTime(item.exercise_time, timezone),
+        name: exerciseNameById.get(`${item.motion_id ?? ''}`) ?? '运动',
+        duration: toNumber(item.duration),
+        calories_burned: toNumber(item.calories_burned),
+        mets_snapshot: toNumber(item.mets_snapshot),
+      })),
+    },
+    status_evidence: {
+      count: statusInRange.length,
+      logs: statusInRange.slice(-12).map((item) => ({
+        time: localDisplayTime(item.record_time, timezone),
+        level: item.status_level ?? null,
+        notes: item.notes ?? null,
+        related_meal_id: item.related_meal_id ?? null,
+        related_exercise_id: item.related_exercise_id ?? null,
+      })),
     },
     cgm_evidence: {
       count: cgmRows.length,
@@ -931,7 +1149,7 @@ async function buildLlmSummary(payload: {
   }
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 12000);
+  const timeoutId = setTimeout(() => controller.abort(), 45000);
   try {
     const response = await fetch(apiUrl, {
       method: 'POST',
@@ -953,12 +1171,14 @@ async function buildLlmSummary(payload: {
             content: buildSummaryPrompt(payload),
           },
         ],
+        thinking: { type: 'disabled' },
+        max_tokens: 500,
         temperature: 0.35,
       }),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      return { text: payload.fallback, source: 'template', error: `llm_http_${response.status}` };
+      return { text: payload.fallback, source: 'template', error: llmHttpError(response.status, data) };
     }
     const content = data?.choices?.[0]?.message?.content;
     const summary = sanitizeLlmSummary(typeof content === 'string' ? content : '');
@@ -976,8 +1196,16 @@ async function buildLlmSummary(payload: {
 }
 
 async function buildAnalysisCards(evidence: Row) {
-  const fallback = buildFallbackAnalysisCards(evidence);
-  if (!hasUsableCardsData((evidence.weekly_metrics as Row | undefined) ?? {})) {
+  const weekly = (evidence.weekly_metrics as Row | undefined) ?? {};
+  const reportType = hasUsableCardsData(weekly)
+    ? 'glucose_report'
+    : hasLifestyleNoGlucoseData(evidence)
+      ? 'lifestyle_no_glucose'
+      : 'glucose_report';
+  const fallback = reportType === 'lifestyle_no_glucose'
+    ? buildFallbackLifestyleNoGlucoseReport(evidence)
+    : buildFallbackAnalysisReport(evidence);
+  if (reportType === 'glucose_report' && !hasUsableCardsData(weekly)) {
     return { cards: fallback, source: 'template', error: 'insufficient_data' };
   }
   const apiKey = Deno.env.get('ANALYSIS_LLM_API_KEY') ?? Deno.env.get('ZHIPU_API_KEY');
@@ -994,7 +1222,7 @@ async function buildAnalysisCards(evidence: Row) {
   }
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 12000);
+  const timeoutId = setTimeout(() => controller.abort(), 45000);
   try {
     const response = await fetch(apiUrl, {
       method: 'POST',
@@ -1008,28 +1236,43 @@ async function buildAnalysisCards(evidence: Row) {
         messages: [
           {
             role: 'system',
-            content: analysisCardsSystemPrompt(),
+            content: reportType === 'lifestyle_no_glucose'
+              ? lifestyleNoGlucoseSystemPrompt()
+              : analysisReportSystemPrompt(),
           },
           {
             role: 'user',
-            content: buildAnalysisCardsPrompt(evidence),
+            content: reportType === 'lifestyle_no_glucose'
+              ? buildLifestyleNoGlucoseReportPrompt(evidence)
+              : buildAnalysisReportPrompt(evidence),
           },
         ],
-        temperature: 0.25,
+        thinking: { type: 'disabled' },
+        max_tokens: 1200,
+        temperature: 0.35,
       }),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      return { cards: fallback, source: 'template', error: `llm_http_${response.status}` };
+      return { cards: fallback, source: 'template', error: llmHttpError(response.status, data) };
     }
     const content = data?.choices?.[0]?.message?.content;
-    const parsed = parseAnalysisCards(typeof content === 'string' ? content : '');
-    if (!parsed) {
-      return { cards: fallback, source: 'template', error: 'invalid_analysis_cards' };
+    const reportMarkdown = sanitizeReportMarkdown(
+      typeof content === 'string' ? content : '',
+      reportType,
+    );
+    if (!reportMarkdown) {
+      return { cards: fallback, source: 'template', error: 'invalid_analysis_report' };
     }
-    return { cards: parsed, source: 'llm' };
+    return {
+      cards: {
+        ...fallback,
+        report_markdown: reportMarkdown,
+      },
+      source: 'llm',
+    };
   } catch (error) {
-    console.error('analysis cards fallback:', error);
+    console.error('analysis report fallback:', error);
     const reason = error instanceof Error && error.name === 'AbortError' ? 'llm_timeout' : 'llm_exception';
     return { cards: fallback, source: 'template', error: reason };
   } finally {
@@ -1043,125 +1286,219 @@ function hasUsableCardsData(weekly: Row) {
   return avg !== null && avg > 0 && readingCount > 0;
 }
 
-function analysisCardsSystemPrompt() {
+function hasLifestyleNoGlucoseData(evidence: Row) {
+  const weekly = (evidence.weekly_metrics as Row | undefined) ?? {};
+  const glucoseRecords = Array.isArray(evidence.glucose_records) ? evidence.glucose_records : [];
+  const glucoseCount =
+    toNumber(weekly.glucose_count) ??
+      toNumber(weekly.reading_count) ??
+      glucoseRecords.length;
+  if (glucoseCount > 0) return false;
+
+  const dietary = (evidence.dietary as Row | undefined) ?? {};
+  const exercise = (evidence.exercise_evidence as Row | undefined) ?? {};
+  const status = (evidence.status_evidence as Row | undefined) ?? {};
+  const mealCount = toNumber(dietary.meal_count) ?? 0;
+  const itemCount = toNumber(dietary.item_count) ?? 0;
+  const exerciseCount = toNumber(exercise.recent_count) ?? 0;
+  const statusCount = toNumber(status.count) ?? 0;
+  return mealCount > 0 || itemCount > 0 || exerciseCount > 0 || statusCount > 0;
+}
+
+function llmHttpError(status: number, data: unknown) {
+  const detail = describeError(data)
+    .replaceAll(/\s+/g, ' ')
+    .slice(0, 220);
+  return detail && detail !== 'Unknown error'
+    ? `llm_http_${status}: ${detail}`
+    : `llm_http_${status}`;
+}
+
+function analysisReportSystemPrompt() {
   return [
-    '你是一个“普通人群血糖健康管理助手”的分析卡片生成器。',
-    '你的任务是把用户近 7 天的血糖、饮食、运动、主观状态记录，转成普通用户能快速看懂的生活习惯观察卡片。',
+    '你是一个专业的、充满亲和力的“私人精力与身材管理教练”。',
+    '你的任务是根据用户过去一周的血糖、饮食、运动、主观状态数据，生成一份个性化、长文本形式的健康分析报告。',
+    '',
+    '核心分析逻辑：',
+    '1. 关注“血糖波动与精力”的关联：高升糖饮食可能带来较快的血糖上升和随后的回落，一些人会表现为疲劳、注意力下降或食欲增强。',
+    '2. 关注“运动干预”的反馈：规律运动和饭后轻活动可能降低波动幅度，让能量供应更稳定。',
+    '3. 目标是通过数据反馈，引导用户在饮食和运动上做出低门槛微量改变，改善精力和体型管理体验。',
     '',
     '绝对规则：',
     '1. 只能基于输入的 evidence 数据生成内容，不能编造没有记录的食物、血糖、运动或状态。',
     '2. 不能做医疗诊断，不能出现“糖尿病、确诊、治疗、用药、药物、胰岛素、处方、就医、医院”等表述。',
     '3. 所有结论必须使用保守措辞，例如“观察到、可能、建议继续记录、值得关注”，不能说“一定、必须、导致”。',
     '4. 当样本不足时，要明确说明“样本还少”或“缺少某类记录”，并给出下一步补记录建议。',
-    '5. 输出必须是合法 JSON。不要输出解释性文字。不要输出 Markdown。',
-    '6. 每条建议要具体、低门槛、可执行，优先围绕份量、搭配、饭后轻运动、状态记录。',
-    '7. 面向普通用户，不解释复杂医学术语；如果必须出现 CV/TIR，要改写成“波动程度/目标范围内时间”。',
-    '8. 文案要适合手机卡片阅读：短句、自然、不要写成长段报告，但不要求精确控制字数。',
+    '5. 绝对不要输出任何 JSON 代码。请直接输出可展示给用户的 Markdown 富文本。',
+    '6. 语气像真人健康教练一样自然、有同理心，避免生硬技术说教。',
+    '7. 可以适当使用 Emoji，但不要夸张。',
+    '8. 面向普通用户，不解释复杂医学术语；如果必须出现 CV/TIR，要改写成“波动程度/目标范围内时间”。',
     '',
-    '请严格按以下 JSON 结构输出：',
-    '{"overall":{"title":"本周重点标题","summary":"本周最重要的一句话观察","confidence":"low | medium | high","confidence_reason":"为什么是这个可信度"},"diet_cards":[{"title":"食物或餐次名","signal":"green | yellow | red | observe","evidence":"只写已有证据","suggestion":"具体饮食调整建议","next_record":"下次建议补充的记录"}],"exercise_card":{"title":"运动建议标题","evidence":"已有运动或缺少运动的证据","suggestion":"具体可执行运动建议"},"next_steps":[{"type":"glucose | diet | exercise | status","task":"下一步补记录任务"}],"safety_note":"仅供生活习惯参考，不替代医疗建议。"}',
+    '报告必须包含以下四个 Markdown 三级标题，标题文字必须完全一致：',
+    '### 🌟 本周整体概览',
+    '### 🥗 饮食与精力追踪',
+    '### 🏃‍♂️ 运动与代谢反馈',
+    '### 💡 下一步微量改变',
   ].join('\n');
 }
 
-function buildAnalysisCardsPrompt(evidence: Row) {
+function lifestyleNoGlucoseSystemPrompt() {
   return [
-    '请根据以下 evidence 生成分析卡片。',
+    '你是一个专业的、充满亲和力的“私人精力与身材管理教练”。',
+    '你的任务是根据用户过去一周的饮食、运动、主观状态数据，生成一份个性化、长文本形式的生活记录报告。',
+    '',
+    '当前分支的关键事实：本周血糖记录为 0。你必须明确说明缺少血糖数据，因此本报告只观察生活记录，不评价血糖变化。',
+    '',
+    '核心分析逻辑：',
+    '1. 关注饮食结构、热量、用餐时间和主观精力状态之间的可能关联。',
+    '2. 关注运动记录和状态反馈之间的关系，例如运动后是否更轻松、精神更稳定、疲劳感是否缓和。',
+    '3. 目标是通过生活记录反馈，引导用户做出低门槛微量改变，并鼓励下一步补充血糖记录。',
+    '',
+    '绝对规则：',
+    '1. 只能基于输入的 evidence 数据生成内容，不能编造没有记录的食物、运动或状态。',
+    '2. 不能评价血糖平稳、血糖波动、达标占比、餐后血糖变化、血糖因果关系，也不能写“血糖更稳定、波动更小、达标更好”。',
+    '3. 不能做医疗诊断，不能出现“糖尿病、确诊、治疗、用药、药物、胰岛素、处方、就医、医院”等表述。',
+    '4. 所有结论必须使用保守措辞，例如“观察到、可能、建议继续记录、值得关注”，不能说“一定、必须、导致”。',
+    '5. 当某类记录不足时，要明确说明“样本还少”或“缺少某类记录”，并给出下一步补记录建议。',
+    '6. 绝对不要输出任何 JSON 代码。请直接输出可展示给用户的 Markdown 富文本。',
+    '7. 语气像真人健康教练一样自然、有同理心，避免生硬技术说教。',
+    '8. 可以适当使用 Emoji，但不要夸张。',
+    '',
+    '报告必须包含以下四个 Markdown 三级标题，标题文字必须完全一致：',
+    '### 🌟 本周整体概览',
+    '### 🥗 饮食与精力追踪',
+    '### 🏃‍♂️ 运动与状态反馈',
+    '### 💡 下一步微量改变',
+  ].join('\n');
+}
+
+function buildAnalysisReportPrompt(evidence: Row) {
+  return [
+    '请根据以下 evidence 生成分析报告。',
     '不要重新计算没有提供的指标，不要扩展到证据之外。',
+    '输出必须是 Markdown 正文，不要包裹代码块。',
     '',
     'evidence:',
     JSON.stringify(evidence, null, 2),
   ].join('\n');
 }
 
-function parseAnalysisCards(raw: string) {
-  const jsonText = extractJsonObject(raw);
-  if (!jsonText) return null;
-  try {
-    const parsed = JSON.parse(jsonText);
-    return normalizeAnalysisCards(parsed);
-  } catch (_) {
-    return null;
-  }
+function buildLifestyleNoGlucoseReportPrompt(evidence: Row) {
+  return [
+    '请根据以下 evidence 生成生活记录报告。',
+    '本周没有血糖记录，不要重新计算或推断任何血糖指标。',
+    '只能分析饮食、运动、主观状态记录，并在下一步建议中鼓励补充血糖记录。',
+    '输出必须是 Markdown 正文，不要包裹代码块。',
+    '',
+    'evidence:',
+    JSON.stringify(evidence, null, 2),
+  ].join('\n');
 }
 
-function extractJsonObject(raw: string) {
-  const trimmed = raw
-    .replace(/```json/gi, '```')
-    .replace(/```/g, '')
+function sanitizeReportMarkdown(raw: string, reportType = 'glucose_report') {
+  const markdown = normalizeReportHeadings(
+    stripBenignMedicalDisclaimers(
+      raw.replace(/```(?:markdown|md)?/gi, '').replace(/```/g, '').trim(),
+    ),
+    reportType,
+  );
+  if (!markdown || markdown.length < 80 || markdown.length > 4000) return null;
+  if (markdown.includes('{') && markdown.includes('"report_markdown"')) return null;
+  if (containsForbiddenMedicalText(markdown)) return null;
+  if (
+    reportType === 'lifestyle_no_glucose' &&
+    containsNoGlucoseForbiddenInference(markdown)
+  ) return null;
+  const required = requiredReportHeadings(reportType);
+  if (!required.every((heading) => markdown.includes(heading))) return null;
+  return markdown;
+}
+
+function containsNoGlucoseForbiddenInference(markdown: string) {
+  const compact = markdown.replace(/\s+/g, '');
+  return (
+    /血糖(更|较|比较|整体|看起来|保持|依然)(平稳|稳定)/.test(compact) ||
+    /血糖波动(明显|较大|较小|更小|更平缓|稳定|平稳)/.test(compact) ||
+    /餐后血糖(上升|下降|回落|达到|约为)/.test(compact) ||
+    /达标占比(较高|较低|更好|不错|改善|稳定|达到|约为)/.test(compact) ||
+    /血糖因果关系/.test(compact)
+  );
+}
+
+function requiredReportHeadings(reportType = 'glucose_report') {
+  return [
+    '### 🌟 本周整体概览',
+    '### 🥗 饮食与精力追踪',
+    reportType === 'lifestyle_no_glucose'
+      ? '### 🏃‍♂️ 运动与状态反馈'
+      : '### 🏃‍♂️ 运动与代谢反馈',
+    '### 💡 下一步微量改变',
+  ];
+}
+
+function normalizeReportHeadings(markdown: string, reportType = 'glucose_report') {
+  const movementTarget = reportType === 'lifestyle_no_glucose'
+    ? '### 🏃‍♂️ 运动与状态反馈'
+    : '### 🏃‍♂️ 运动与代谢反馈';
+  const movementPattern = reportType === 'lifestyle_no_glucose'
+    ? /(运动|活动).*(状态|反馈|精力|感受)|运动建议|运动与状态/
+    : /(运动|活动).*(代谢|反馈|血糖|状态)|运动建议|运动与代谢/;
+  const rules = [
+    {
+      target: '### 🌟 本周整体概览',
+      pattern: /(本周|整体).*(概览|总结|表现|情况)|本周重点|整体概览/,
+    },
+    {
+      target: '### 🥗 饮食与精力追踪',
+      pattern: /(饮食|餐食|食物).*(精力|状态|追踪|观察)|饮食与精力|饮食观察/,
+    },
+    {
+      target: movementTarget,
+      pattern: movementPattern,
+    },
+    {
+      target: '### 💡 下一步微量改变',
+      pattern: /(下一步|下周|微量|小建议|建议).*(改变|行动|记录|尝试)|下一步微量改变/,
+    },
+  ];
+  const used = new Set<string>();
+  return markdown
+    .split('\n')
+    .map((line) => {
+      const candidate = line
+        .replace(/^#{1,6}\s*/, '')
+        .replace(/^\*\*/, '')
+        .replace(/\*\*$/, '')
+        .replace(/[🌟🥗🏃‍♂️💡⭐✨📌📊📝、：:]/g, '')
+        .trim();
+      for (const rule of rules) {
+        if (!used.has(rule.target) && rule.pattern.test(candidate)) {
+          used.add(rule.target);
+          return rule.target;
+        }
+      }
+      return line;
+    })
+    .join('\n')
     .trim();
-  const start = trimmed.indexOf('{');
-  const end = trimmed.lastIndexOf('}');
-  if (start < 0 || end <= start) return null;
-  return trimmed.slice(start, end + 1);
 }
 
-function normalizeAnalysisCards(value: unknown) {
-  if (!value || typeof value !== 'object') return null;
-  const map = value as Row;
-  const overall = map.overall && typeof map.overall === 'object'
-    ? map.overall as Row
-    : null;
-  const exercise = map.exercise_card && typeof map.exercise_card === 'object'
-    ? map.exercise_card as Row
-    : null;
-  if (!overall || !exercise || !Array.isArray(map.next_steps)) return null;
-
-  const cards = {
-    overall: {
-      title: safeText(overall.title, '本周重点'),
-      summary: safeText(overall.summary, '样本还少，建议继续记录餐食、血糖和状态来观察趋势。'),
-      confidence: normalizeConfidence(overall.confidence),
-      confidence_reason: safeText(overall.confidence_reason, '基于当前记录完整度'),
-    },
-    diet_cards: Array.isArray(map.diet_cards)
-      ? map.diet_cards
-        .filter((item) => item && typeof item === 'object')
-        .slice(0, 3)
-        .map((item) => {
-          const row = item as Row;
-          return {
-            title: safeText(row.title, '饮食观察'),
-            signal: normalizeSignal(row.signal),
-            evidence: safeText(row.evidence, '样本还少，建议继续配对记录。'),
-            suggestion: safeText(row.suggestion, '先控制份量，搭配蛋白质和蔬菜继续观察。'),
-            next_record: safeText(row.next_record, '下次补餐后2小时血糖'),
-          };
-        })
-      : [],
-    exercise_card: {
-      title: safeText(exercise.title, '饭后轻动'),
-      evidence: safeText(exercise.evidence, '本周运动记录还可以继续补充。'),
-      suggestion: safeText(exercise.suggestion, '先从饭后轻走10分钟开始观察状态。'),
-    },
-    next_steps: map.next_steps
-      .filter((item) => item && typeof item === 'object')
-      .slice(0, 4)
-      .map((item) => {
-        const row = item as Row;
-        return {
-          type: normalizeStepType(row.type),
-          task: safeText(row.task, '继续补充一条记录'),
-        };
-      }),
-    safety_note: '仅供生活习惯参考，不替代医疗建议。',
-  };
-  if (containsForbiddenMedicalText(JSON.stringify(cards))) return null;
-  if (cards.diet_cards.length === 0) {
-    cards.diet_cards.push({
-      title: '饮食观察',
-      signal: 'observe',
-      evidence: '样本还少，暂时看不出稳定规律。',
-      suggestion: '先选择一餐固定记录餐后血糖和状态。',
-      next_record: '餐后2小时补血糖',
-    });
-  }
-  if (cards.next_steps.length === 0) {
-    cards.next_steps.push({ type: 'glucose', task: '餐后2小时补血糖' });
-  }
-  return cards;
+function stripBenignMedicalDisclaimers(markdown: string) {
+  return markdown
+    .split('\n')
+    .filter((line) => {
+      const text = line.replace(/\s+/g, '');
+      return !(
+        /仅供.*参考/.test(text) && /(诊断|治疗|就医|医生|医疗)/.test(text) ||
+        /不替代.*(诊断|治疗|就医|医生|医疗)/.test(text) ||
+        /不能替代.*(诊断|治疗|就医|医生|医疗)/.test(text)
+      );
+    })
+    .join('\n')
+    .trim();
 }
 
-function buildFallbackAnalysisCards(evidence: Row) {
+function buildFallbackAnalysisReport(evidence: Row) {
   const weekly = (evidence.weekly_metrics as Row | undefined) ?? {};
   const missing = Array.isArray(evidence.missing_data)
     ? evidence.missing_data.map((item) => `${item}`)
@@ -1172,44 +1509,37 @@ function buildFallbackAnalysisCards(evidence: Row) {
   const foodSignals = Array.isArray(evidence.food_signals)
     ? evidence.food_signals as Row[]
     : [];
+  const exercise = (evidence.exercise_evidence as Row | undefined) ?? {};
   const glucoseCount = toNumber(weekly.glucose_count) ?? 0;
   const validDays = toNumber(weekly.valid_days) ?? 0;
   const avg = toNumber(weekly.avg_glucose);
   const confidence = glucoseCount >= 8 && validDays >= 4 ? 'medium' : 'low';
-  const dietCards = foodSignals.slice(0, 3).map((signal) => ({
-    title: safeText(signal.food_name, '饮食观察'),
-    signal: normalizeSignal(signal.signal_level),
-    evidence: toNumber(signal.avg_excursion) === null
-      ? `参与 ${toNumber(signal.meal_count) ?? 0} 餐，样本还少`
-      : `平均餐后升幅 ${formatMetric(toNumber(signal.avg_excursion), 'mmol/L')}`,
-    suggestion: safeText(signal.reason, '先控制份量并继续观察餐后状态。'),
-    next_record: '下次补餐后2小时血糖',
-  }));
-  for (const meal of mealEvidence) {
-    if (dietCards.length >= 3) break;
-    const foods = Array.isArray(meal.foods) ? meal.foods.join('、') : '这餐';
-    const post = toNumber(meal.post_glucose);
-    dietCards.push({
-      title: foods || '饮食观察',
-      signal: 'observe',
-      evidence: post === null
-        ? '这餐缺少餐后血糖记录'
-        : `餐后约 ${toNumber(meal.post_minutes) ?? 0} 分钟 ${post.toFixed(1)} mmol/L`,
-      suggestion: '先观察份量、搭配和饭后活动的变化。',
-      next_record: post === null ? '餐后2小时补血糖' : '补一条餐后状态',
-    });
-  }
-  if (dietCards.length === 0) {
-    dietCards.push({
-      title: '饮食观察',
-      signal: 'observe',
-      evidence: '样本还少，暂时看不出稳定规律。',
-      suggestion: '先选择一餐固定记录餐后血糖和状态。',
-      next_record: '餐后2小时补血糖',
-    });
-  }
-  const exercise = (evidence.exercise_evidence as Row | undefined) ?? {};
   const exerciseMinutes = toNumber(exercise.total_minutes) ?? 0;
+  const firstFood = foodSignals.find((signal) => safeText(signal.food_name, '').length > 0);
+  const firstMeal = mealEvidence.find((meal) => Array.isArray(meal.foods) && meal.foods.length > 0);
+  const foodText = firstFood
+    ? `${safeText(firstFood.food_name, '部分餐食')} 已经有一些记录，可以继续配对餐后血糖和状态观察。`
+    : firstMeal
+      ? `${(firstMeal.foods as unknown[]).map((item) => `${item}`).join('、')} 这类餐食可以作为下一步重点观察对象。`
+      : '饮食样本还少，暂时不对某个食物下结论。';
+  const exerciseText = exerciseMinutes > 0
+    ? `本周已记录运动约 ${Math.round(exerciseMinutes)} 分钟，可以继续观察饭后轻活动后的状态。`
+    : '本周运动记录偏少，先从饭后轻走 10 分钟开始比较容易坚持。';
+  const reportMarkdown = [
+    '### 🌟 本周整体概览',
+    avg === null
+      ? `本周血糖记录还少，已有 ${glucoseCount} 条血糖记录，建议先把餐食、餐后血糖和状态配对记录起来。`
+      : `观察到本周平均血糖约 ${avg.toFixed(1)} mmol/L，记录覆盖 ${validDays} 天，建议结合餐后状态继续观察。`,
+    '',
+    '### 🥗 饮食与精力追踪',
+    `${foodText} 如果餐后容易犯困、饥饿或注意力下降，下一次可以补一条状态备注。`,
+    '',
+    '### 🏃‍♂️ 运动与代谢反馈',
+    exerciseText,
+    '',
+    '### 💡 下一步微量改变',
+    buildFallbackMicroChange(missing),
+  ].join('\n');
   return {
     overall: {
       title: '本周重点',
@@ -1219,34 +1549,101 @@ function buildFallbackAnalysisCards(evidence: Row) {
       confidence,
       confidence_reason: confidence === 'medium' ? '记录覆盖较多天' : '样本还少',
     },
-    diet_cards: dietCards,
-    exercise_card: {
-      title: exerciseMinutes > 0 ? '继续轻运动' : '饭后轻动',
-      evidence: exerciseMinutes > 0
-        ? `本周已记录运动约 ${Math.round(exerciseMinutes)} 分钟`
-        : '本周运动记录偏少',
-      suggestion: '先从饭后轻走10分钟开始，记录运动后状态变化。',
-    },
-    next_steps: buildFallbackNextSteps(missing),
+    report_type: 'glucose_report',
+    report_markdown: reportMarkdown,
     safety_note: '仅供生活习惯参考，不替代医疗建议。',
   };
 }
 
-function buildFallbackNextSteps(missing: string[]) {
-  const steps: Array<{ type: string; task: string }> = [];
+function buildFallbackLifestyleNoGlucoseReport(evidence: Row) {
+  const dietary = (evidence.dietary as Row | undefined) ?? {};
+  const mealEvidence = Array.isArray(evidence.meal_evidence)
+    ? evidence.meal_evidence as Row[]
+    : [];
+  const exercise = (evidence.exercise_evidence as Row | undefined) ?? {};
+  const status = (evidence.status_evidence as Row | undefined) ?? {};
+  const missing = Array.isArray(evidence.missing_data)
+    ? evidence.missing_data.map((item) => `${item}`)
+    : [];
+  const mealCount = toNumber(dietary.meal_count) ?? 0;
+  const itemCount = toNumber(dietary.item_count) ?? 0;
+  const totalCalories = toNumber(dietary.total_calories);
+  const exerciseCount = toNumber(exercise.recent_count) ?? 0;
+  const exerciseMinutes = toNumber(exercise.total_minutes) ?? 0;
+  const statusCount = toNumber(status.count) ?? 0;
+  const firstMeal = mealEvidence.find((meal) => Array.isArray(meal.foods) && meal.foods.length > 0);
+  const foodText = firstMeal
+    ? `${(firstMeal.foods as unknown[]).map((item) => `${item}`).join('、')} 这类餐食已经进入记录，可以继续配合饭后状态备注来看精力变化。`
+    : mealCount > 0
+      ? `本周已有 ${mealCount} 餐饮食记录，${itemCount} 个食物条目；如果继续补全食物名和份量，报告会更容易看出饮食节奏。`
+      : '本周饮食记录还少，暂时不对具体食物或餐食组合下结论。';
+  const calorieText = totalCalories !== null && totalCalories > 0
+    ? `记录到的饮食热量约 ${Math.round(totalCalories)} kcal，可作为生活节奏观察，不代表精确摄入。`
+    : '饮食热量还不完整，先把常吃餐次记录清楚就很好。';
+  const exerciseText = exerciseCount > 0
+    ? `本周已记录 ${exerciseCount} 次运动，合计约 ${Math.round(exerciseMinutes)} 分钟，可以继续观察运动当天的精力备注。`
+    : '本周运动记录还少，可以先从一次饭后轻走或短时拉伸开始记录。';
+  const statusText = statusCount > 0
+    ? `本周已有 ${statusCount} 条精力状态记录，这些备注能帮助你回看哪些时段更容易疲惫或状态更好。`
+    : '本周精力状态备注还少，建议在犯困、饥饿或状态不错时补一句感受。';
+  const reportMarkdown = [
+    '### 🌟 本周整体概览',
+    `本周没有血糖记录，因此这份报告不评价血糖波动、达标占比或餐后血糖变化；当前先基于 ${mealCount} 餐饮食、${exerciseCount} 次运动和 ${statusCount} 条状态记录做生活观察。`,
+    '',
+    '### 🥗 饮食与精力追踪',
+    `${foodText} ${calorieText}`,
+    '',
+    '### 🏃‍♂️ 运动与状态反馈',
+    `${exerciseText} ${statusText}`,
+    '',
+    '### 💡 下一步微量改变',
+    buildFallbackLifestyleMicroChange(missing, mealCount, exerciseCount, statusCount),
+  ].join('\n');
+  return {
+    overall: {
+      title: '本周重点',
+      summary: `本周没有血糖记录，先根据饮食、运动和状态记录生成生活观察；下一步建议补一条餐后血糖，让报告能把生活行为和血糖读数配对起来。`,
+      confidence: mealCount + exerciseCount + statusCount >= 6 ? 'medium' : 'low',
+      confidence_reason: '当前为无血糖生活记录分支',
+    },
+    report_type: 'lifestyle_no_glucose',
+    report_markdown: reportMarkdown,
+    safety_note: '仅供生活习惯参考，不替代医疗建议。',
+  };
+}
+
+function buildFallbackLifestyleMicroChange(
+  missing: string[],
+  mealCount: number,
+  exerciseCount: number,
+  statusCount: number,
+) {
+  if (mealCount === 0) {
+    return '下周先固定记录一餐最常吃的饭，再写一句饭后精力感受，先把生活线索连起来。';
+  }
+  if (statusCount === 0) {
+    return '下周在一餐后补一句状态备注，比如“犯困”“饥饿感强”或“状态平稳”，让饮食记录更有上下文。';
+  }
+  if (exerciseCount === 0) {
+    return '下周选择一餐后轻走 10 分钟，并记录当时状态，看看这个小动作是否更容易坚持。';
+  }
   if (missing.some((item) => item.includes('血糖'))) {
-    steps.push({ type: 'glucose', task: '餐后2小时补血糖' });
+    return '下周优先补一条餐后 2 小时血糖，再配一条状态备注；这样下一次就能生成完整血糖分析报告。';
+  }
+  return '下周继续保持生活记录节奏，并优先补一条餐后 2 小时血糖，让报告从生活观察升级到完整血糖分析。';
+}
+
+function buildFallbackMicroChange(missing: string[]) {
+  if (missing.some((item) => item.includes('血糖'))) {
+    return '下周先固定补一条餐后 2 小时血糖，让报告更容易判断餐食后的真实变化。';
   }
   if (missing.some((item) => item.includes('状态'))) {
-    steps.push({ type: 'status', task: '餐后犯困时记状态' });
+    return '下周先在犯困、饥饿或状态稳定时补一句状态备注，帮助识别饮食和精力的关系。';
   }
   if (missing.some((item) => item.includes('运动'))) {
-    steps.push({ type: 'exercise', task: '饭后轻走后记运动' });
+    return '下周选择一餐后轻走 10 分钟，并记录当时状态，看看饭后活动是否让你更舒服。';
   }
-  if (steps.length === 0) {
-    steps.push({ type: 'diet', task: '继续记录下一餐搭配' });
-  }
-  return steps.slice(0, 4);
+  return '下周继续保持当前记录节奏，优先把餐食、餐后血糖和状态放在同一天配对记录。';
 }
 
 function safeText(value: unknown, fallback: string) {
@@ -1255,23 +1652,8 @@ function safeText(value: unknown, fallback: string) {
   return text;
 }
 
-function normalizeSignal(value: unknown) {
-  const text = `${value ?? ''}`;
-  return ['green', 'yellow', 'red', 'observe'].includes(text) ? text : 'observe';
-}
-
-function normalizeConfidence(value: unknown) {
-  const text = `${value ?? ''}`;
-  return ['low', 'medium', 'high'].includes(text) ? text : 'low';
-}
-
-function normalizeStepType(value: unknown) {
-  const text = `${value ?? ''}`;
-  return ['glucose', 'diet', 'exercise', 'status'].includes(text) ? text : 'diet';
-}
-
 function containsForbiddenMedicalText(value: string) {
-  return /(糖尿病|确诊|诊断|服药|用药|药物|胰岛素|就医|医院|治疗|处方)/.test(value);
+  return /(糖尿病|确诊|诊断为|服药|用药|药物|胰岛素|处方|治疗方案|建议就医|及时就医|尽快就医|去医院|看医生)/.test(value);
 }
 
 function buildSummaryPrompt(payload: {

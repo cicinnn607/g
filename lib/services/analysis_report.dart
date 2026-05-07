@@ -33,6 +33,12 @@ String _safeText(Object? value, [String fallback = '']) {
   return text;
 }
 
+String _safeMarkdown(Object? value, [String fallback = '']) {
+  final text = _stringValue(value).trim();
+  if (text.isEmpty || _hasForbiddenMedicalText(text)) return fallback;
+  return text;
+}
+
 class DailyGlucoseStat {
   final String recordDate;
   final int readingCount;
@@ -233,94 +239,27 @@ class AnalysisCardsOverall {
   }
 }
 
-class AnalysisDietCard {
-  final String title;
-  final String signal;
-  final String evidence;
-  final String suggestion;
-  final String nextRecord;
-
-  const AnalysisDietCard({
-    required this.title,
-    required this.signal,
-    required this.evidence,
-    required this.suggestion,
-    required this.nextRecord,
-  });
-
-  factory AnalysisDietCard.fromMap(Map<String, dynamic> map) {
-    final signal = _stringValue(map['signal']);
-    return AnalysisDietCard(
-      title: _safeText(map['title'], '饮食观察'),
-      signal: const ['green', 'yellow', 'red', 'observe'].contains(signal)
-          ? signal
-          : 'observe',
-      evidence: _safeText(map['evidence'], '样本还少，建议继续配对记录。'),
-      suggestion: _safeText(map['suggestion'], '先控制份量，搭配蛋白质和蔬菜继续观察。'),
-      nextRecord: _safeText(map['next_record'], '下次补餐后2小时血糖'),
-    );
-  }
-}
-
-class AnalysisExerciseCard {
-  final String title;
-  final String evidence;
-  final String suggestion;
-
-  const AnalysisExerciseCard({
-    required this.title,
-    required this.evidence,
-    required this.suggestion,
-  });
-
-  factory AnalysisExerciseCard.fromMap(Map<String, dynamic> map) {
-    return AnalysisExerciseCard(
-      title: _safeText(map['title'], '饭后轻动'),
-      evidence: _safeText(map['evidence'], '本周运动记录还可以继续补充。'),
-      suggestion: _safeText(map['suggestion'], '先从饭后轻走10分钟开始观察状态。'),
-    );
-  }
-}
-
-class AnalysisNextStep {
-  final String type;
-  final String task;
-
-  const AnalysisNextStep({required this.type, required this.task});
-
-  factory AnalysisNextStep.fromMap(Map<String, dynamic> map) {
-    final type = _stringValue(map['type']);
-    return AnalysisNextStep(
-      type: const ['glucose', 'diet', 'exercise', 'status'].contains(type)
-          ? type
-          : 'diet',
-      task: _safeText(map['task'], '继续补充一条记录'),
-    );
-  }
-}
-
 class AnalysisCards {
   final AnalysisCardsOverall overall;
-  final List<AnalysisDietCard> dietCards;
-  final AnalysisExerciseCard exerciseCard;
-  final List<AnalysisNextStep> nextSteps;
+  final String reportMarkdown;
   final String safetyNote;
   final String source;
+  final String reportType;
   final String? error;
   final String? cacheKey;
 
   const AnalysisCards({
     required this.overall,
-    required this.dietCards,
-    required this.exerciseCard,
-    required this.nextSteps,
+    required this.reportMarkdown,
     required this.safetyNote,
     this.source = 'template',
+    this.reportType = 'glucose_report',
     this.error,
     this.cacheKey,
   });
 
   bool get isLlm => source == 'llm';
+  bool get isLifestyleNoGlucose => reportType == 'lifestyle_no_glucose';
 
   factory AnalysisCards.fromMap(Map<String, dynamic> map) {
     final rawCards = map['analysis_cards'];
@@ -329,33 +268,15 @@ class AnalysisCards {
         : map;
     final source = _stringValue(map['analysis_cards_source']).trim();
     final error = _stringValue(map['analysis_cards_error']).trim();
-    final dietCards = _mapListValue(
-      cards['diet_cards'],
-    ).map(AnalysisDietCard.fromMap).toList();
-    final nextSteps = _mapListValue(
-      cards['next_steps'],
-    ).map(AnalysisNextStep.fromMap).toList();
+    final reportType = _stringValue(
+      map['report_type'] ?? cards['report_type'],
+    ).trim();
     return AnalysisCards(
       overall: AnalysisCardsOverall.fromMap(_mapValue(cards['overall'])),
-      dietCards: dietCards.isEmpty
-          ? const [
-              AnalysisDietCard(
-                title: '饮食观察',
-                signal: 'observe',
-                evidence: '样本还少，暂时看不出稳定规律。',
-                suggestion: '先选择一餐固定记录餐后血糖和状态。',
-                nextRecord: '餐后2小时补血糖',
-              ),
-            ]
-          : dietCards,
-      exerciseCard: AnalysisExerciseCard.fromMap(
-        _mapValue(cards['exercise_card']),
-      ),
-      nextSteps: nextSteps.isEmpty
-          ? const [AnalysisNextStep(type: 'glucose', task: '餐后2小时补血糖')]
-          : nextSteps,
+      reportMarkdown: _safeMarkdown(cards['report_markdown'], ''),
       safetyNote: _safeText(cards['safety_note'], '仅供生活习惯参考，不替代医疗建议。'),
       source: source.isEmpty ? _stringValue(cards['source']).trim() : source,
+      reportType: reportType.isEmpty ? 'glucose_report' : reportType,
       error: error.isEmpty ? null : error,
       cacheKey: _stringValue(map['evidence_cache_key']).trim().isEmpty
           ? null
@@ -370,21 +291,7 @@ class AnalysisCards {
       confidence: 'low',
       confidenceReason: '样本还少',
     ),
-    dietCards: [
-      AnalysisDietCard(
-        title: '饮食观察',
-        signal: 'observe',
-        evidence: '样本还少，暂时看不出稳定规律。',
-        suggestion: '先选择一餐固定记录餐后血糖和状态。',
-        nextRecord: '餐后2小时补血糖',
-      ),
-    ],
-    exerciseCard: AnalysisExerciseCard(
-      title: '饭后轻动',
-      evidence: '本周运动记录还可以继续补充。',
-      suggestion: '先从饭后轻走10分钟开始观察状态。',
-    ),
-    nextSteps: [AnalysisNextStep(type: 'glucose', task: '餐后2小时补血糖')],
+    reportMarkdown: '',
     safetyNote: '仅供生活习惯参考，不替代医疗建议。',
   );
 }
